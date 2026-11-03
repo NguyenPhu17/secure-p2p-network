@@ -1,0 +1,158 @@
+networks:
+  p2p-secure-net:
+    name: p2p-secure-net
+    driver: bridge
+
+services:
+  # =========================================================================
+  # 1. Certificate Authority & KDC Server (PKI Root)
+  # =========================================================================
+  ca_server:
+    build:
+      context: .
+      dockerfile: ca_server/Dockerfile
+    container_name: p2p_ca_server
+    ports:
+      - "8000:8000"
+    networks:
+      - p2p-secure-net
+    environment:
+      - NODE_ID=CA_ROOT
+      - PORT=8000
+      - HOST=0.0.0.0
+    volumes:
+      - ca_data:/app/ca_server/data
+    restart: unless-stopped
+
+  # =========================================================================
+  # 2. MITM Proxy / Intercept Node
+  # =========================================================================
+  mitm_proxy:
+    build:
+      context: .
+      dockerfile: mitm_proxy/Dockerfile
+    container_name: p2p_mitm_proxy
+    ports:
+      - "8080:8080"
+    networks:
+      - p2p-secure-net
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - CA_URL=http://ca_server:8000
+    depends_on:
+      ca_server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =========================================================================
+  # 3. Peer Node A (Sender / Initiator)
+  # =========================================================================
+  peer_a:
+    build:
+      context: .
+      dockerfile: peer_node/Dockerfile
+    container_name: p2p_peer_a
+    ports:
+      - "8001:8001"
+    networks:
+      - p2p-secure-net
+    environment:
+      - NODE_ID=node_a
+      - PORT=8001
+      - HOST=0.0.0.0
+      - CA_URL=http://ca_server:8000
+      - PROXY_URL=http://mitm_proxy:8080
+    depends_on:
+      ca_server:
+        condition: service_healthy
+      mitm_proxy:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =========================================================================
+  # 4. Peer Node B (Receiver / Responder)
+  # =========================================================================
+  peer_b:
+    build:
+      context: .
+      dockerfile: peer_node/Dockerfile
+    container_name: p2p_peer_b
+    ports:
+      - "8002:8002"
+    networks:
+      - p2p-secure-net
+    environment:
+      - NODE_ID=node_b
+      - PORT=8002
+      - HOST=0.0.0.0
+      - CA_URL=http://ca_server:8000
+      - PROXY_URL=http://mitm_proxy:8080
+    depends_on:
+      ca_server:
+        condition: service_healthy
+      mitm_proxy:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =========================================================================
+  # 5. Peer Node C (Observer / Additional Peer)
+  # =========================================================================
+  peer_c:
+    build:
+      context: .
+      dockerfile: peer_node/Dockerfile
+    container_name: p2p_peer_c
+    ports:
+      - "8003:8003"
+    networks:
+      - p2p-secure-net
+    environment:
+      - NODE_ID=node_c
+      - PORT=8003
+      - HOST=0.0.0.0
+      - CA_URL=http://ca_server:8000
+      - PROXY_URL=http://mitm_proxy:8080
+    depends_on:
+      ca_server:
+        condition: service_healthy
+      mitm_proxy:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # =========================================================================
+  # 6. Frontend Monitoring Dashboard
+  # =========================================================================
+  frontend_ui:
+    build:
+      context: ./frontend_ui
+      dockerfile: Dockerfile
+    container_name: p2p_frontend_ui
+    ports:
+      - "3000:3000"
+    networks:
+      - p2p-secure-net
+    environment:
+      - VITE_CA_URL=http://localhost:8000
+      - VITE_CA_WS=ws://localhost:8000/events
+      - VITE_MITM_URL=http://localhost:8080
+      - VITE_MITM_WS=ws://localhost:8080/stream
+      - VITE_NODE_A_URL=http://localhost:8001
+      - VITE_NODE_A_WS=ws://localhost:8001/dashboard
+      - VITE_NODE_B_URL=http://localhost:8002
+      - VITE_NODE_B_WS=ws://localhost:8002/dashboard
+    depends_on:
+      ca_server:
+        condition: service_healthy
+      mitm_proxy:
+        condition: service_healthy
+      peer_a:
+        condition: service_healthy
+      peer_b:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  ca_data:
+    name: p2p_ca_data
+
