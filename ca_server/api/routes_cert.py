@@ -24,6 +24,7 @@ class RegisterRequest(BaseModel):
     type: Optional[str] = "REGISTER_REQUEST"
     peer_id: str = Field(..., description="Unique alphanumeric identifier of the peer")
     public_key_pem: str = Field(..., description="SubjectPublicKeyInfo RSA Public Key in PEM format")
+    endpoint: Optional[str] = Field(default=None, description="Optional network endpoint URL of peer")
     timestamp: Optional[str] = Field(default_factory=get_utc_timestamp)
 
 
@@ -46,6 +47,7 @@ async def register_peer(req: RegisterRequest, store=Depends(get_cert_store)):
         record = store.register_peer(
             peer_id=req.peer_id.strip(),
             public_key_pem=req.public_key_pem.strip(),
+            endpoint=req.endpoint.strip() if req.endpoint else None,
         )
         ca_info = store.get_ca_info()
     except Exception as e:

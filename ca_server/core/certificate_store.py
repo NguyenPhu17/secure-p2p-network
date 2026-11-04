@@ -135,7 +135,7 @@ class CertificateStore:
             "details": extract_cert_details(self.ca_cert),
         }
 
-    def register_peer(self, peer_id: str, public_key_pem: str, days_valid: int = 30) -> dict:
+    def register_peer(self, peer_id: str, public_key_pem: str, endpoint: Optional[str] = None, days_valid: int = 30) -> dict:
         """
         Issue an X.509 Certificate for peer_id, store it, and persist to file.
         """
@@ -162,6 +162,7 @@ class CertificateStore:
             record = {
                 "peer_id": peer_id,
                 "serial_number": serial_hex,
+                "endpoint": endpoint,
                 "status": "ACTIVE",
                 "registered_at": get_utc_timestamp(),
                 "expires_at": details["not_after"],
@@ -195,6 +196,7 @@ class CertificateStore:
             for peer_id, rec in self.certs_by_peer.items():
                 peers.append({
                     "peer_id": peer_id,
+                    "endpoint": rec.get("endpoint"),
                     "status": rec.get("status", "ACTIVE"),
                     "serial_number": rec.get("serial_number"),
                     "registered_at": rec.get("registered_at"),

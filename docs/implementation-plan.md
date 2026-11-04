@@ -478,37 +478,37 @@ sequenceDiagram
 ### Phase 2: Phát triển Peer Node — Định danh, Bắt tay & Khóa phiên 
 * **Mục tiêu**: Cài đặt mô hình Servant cho các Peer Node, thực thi đầy đủ giao thức xác thực lẫn nhau (§9.3.2) và quản lý khóa phiên AES-256 (§9.2.2).
 * **Checklist công việc (Tasks)**:
-  - [ ] **Quản lý Định danh & Đăng ký CA (`peer_node/core/identity.py`)**:
-    - [ ] Khi khởi động lần đầu: tự sinh cặp khóa RSA 2048-bit cục bộ
-    - [ ] Tự động gửi `POST /register` lên CA Server để nhận X.509 Certificate
-    - [ ] Tự động tải CA Root Certificate từ CA Server để lưu vào trust store cục bộ
-  - [ ] **Cơ chế Khám phá Node (`peer_node/core/peer_discovery.py`)**:
-    - [ ] Gọi API `GET /peers` lên CA định kỳ hoặc theo yêu cầu
-    - [ ] Duy trì danh bạ active peers trong bộ nhớ (ID, endpoint, trạng thái)
-  - [ ] **Giao thức Bắt tay Xác thực Lẫn nhau (`peer_node/core/handshake.py`)**:
-    - [ ] Cài đặt bước 2a (Init): Tạo ngẫu nhiên `nonce_A` (32 bytes), đóng gói `HANDSHAKE_INIT` kèm Certificate
-    - [ ] Cài đặt bước 2b (Respond): Xác minh Certificate bên gửi qua CA PubKey, sinh `nonce_B`, mã hóa `nonce_A` bằng PK của bên gửi, gửi phản hồi `HANDSHAKE_RESPOND`
-    - [ ] Cài đặt bước 2c (Confirm): Giải mã kiểm tra `nonce_A` trùng khớp gốc, mã hóa `nonce_B` gửi phản hồi `HANDSHAKE_CONFIRM`
-    - [ ] Cơ chế chống Replay Attack: Quản lý cache `_used_nonces` & kiểm tra timestamp để từ chối ngay lập tức nonce tái sử dụng
-  - [ ] **Quản lý Khóa phiên & Xử lý Mật mã Dữ liệu (`peer_node/core/session.py`)**:
-    - [ ] Sinh khóa đối xứng AES-256 ngẫu nhiên (`K_AB`) cho mỗi phiên giao tiếp
-    - [ ] Đóng gói và mã hóa khóa phiên bằng RSA-OAEP với Public Key của node nhận: `E(PK_B, K_AB)`
-    - [ ] Ký số RSA-PSS lên khối thông tin khóa phiên: `sig = SK_A(H(payload))` để chống chối bỏ
-    - [ ] Bên nhận giải mã lấy `K_AB` bằng Private Key `SK_B` và xác thực chữ ký bằng `PK_A`
-    - [ ] Cài đặt mã hóa dữ liệu tin nhắn/file: AES-256-GCM sinh ciphertext, IV 12 bytes, Auth Tag 16 bytes
-    - [ ] Cài đặt băm dữ liệu gốc SHA-256 và ký số RSA-PSS: `sig = SK_A(SHA256(data))`
-    - [ ] Cài đặt quy trình thẩm tra 3 lớp ở bên nhận:
-      - [ ] Lớp 1: Chống phát lại (kiểm tra timestamp và message_id đã xử lý)
-      - [ ] Lớp 2: Kiểm tra toàn vẹn tầng đối xứng (thẩm tra GCM Auth Tag)
-      - [ ] Lớp 3: Kiểm tra xác thực nguồn gốc & chống chối bỏ (đối chiếu RSA Signature với SHA-256)
-  - [ ] **Hệ thống API REST & WebSocket của Peer (`peer_node/api/`)**:
-    - [ ] Endpoint bắt tay: `POST /handshake/init`, `POST /handshake/respond`, `POST /handshake/confirm`
-    - [ ] Endpoint nhận khóa phiên: `POST /session/key`
-    - [ ] Endpoint nhận dữ liệu bảo mật: `POST /message`, `POST /file`
-    - [ ] Endpoint điều khiển chủ động: `POST /connect` (kết nối peer), `POST /send/message` (gửi tin nhắn qua proxy)
-    - [ ] Kênh WebSocket `WS /dashboard`: Đẩy trạng thái khóa, session, tiến trình bắt tay và log giải mã thời gian thực
-  - [ ] **Kiểm thử tích hợp luồng giao tiếp P2P**:
-    - [ ] Viết kịch bản test CLI/curl giả lập Node A kết nối Node B, trao đổi khóa và truyền tin mã hóa thành công
+  - [x] **Quản lý Định danh & Đăng ký CA (`peer_node/core/identity.py`)**:
+    - [x] Khi khởi động lần đầu: tự sinh cặp khóa RSA 2048-bit cục bộ
+    - [x] Tự động gửi `POST /register` lên CA Server để nhận X.509 Certificate
+    - [x] Tự động tải CA Root Certificate từ CA Server để lưu vào trust store cục bộ
+  - [x] **Cơ chế Khám phá Node (`peer_node/core/peer_discovery.py`)**:
+    - [x] Gọi API `GET /peers` lên CA định kỳ hoặc theo yêu cầu
+    - [x] Duy trì danh bạ active peers trong bộ nhớ (ID, endpoint, trạng thái)
+  - [x] **Giao thức Bắt tay Xác thực Lẫn nhau (`peer_node/core/handshake.py`)**:
+    - [x] Cài đặt bước 2a (Init): Tạo ngẫu nhiên `nonce_A` (32 bytes), đóng gói `HANDSHAKE_INIT` kèm Certificate
+    - [x] Cài đặt bước 2b (Respond): Xác minh Certificate bên gửi qua CA PubKey, sinh `nonce_B`, mã hóa `nonce_A` bằng PK của bên gửi, gửi phản hồi `HANDSHAKE_RESPOND`
+    - [x] Cài đặt bước 2c (Confirm): Giải mã kiểm tra `nonce_A` trùng khớp gốc, mã hóa `nonce_B` gửi phản hồi `HANDSHAKE_CONFIRM`
+    - [x] Cơ chế chống Replay Attack: Quản lý cache `_used_nonces` & kiểm tra timestamp để từ chối ngay lập tức nonce tái sử dụng
+  - [x] **Quản lý Khóa phiên & Xử lý Mật mã Dữ liệu (`peer_node/core/session.py`)**:
+    - [x] Sinh khóa đối xứng AES-256 ngẫu nhiên (`K_AB`) cho mỗi phiên giao tiếp
+    - [x] Đóng gói và mã hóa khóa phiên bằng RSA-OAEP với Public Key của node nhận: `E(PK_B, K_AB)`
+    - [x] Ký số RSA-PSS lên khối thông tin khóa phiên: `sig = SK_A(H(payload))` để chống chối bỏ
+    - [x] Bên nhận giải mã lấy `K_AB` bằng Private Key `SK_B` và xác thực chữ ký bằng `PK_A`
+    - [x] Cài đặt mã hóa dữ liệu tin nhắn/file: AES-256-GCM sinh ciphertext, IV 12 bytes, Auth Tag 16 bytes
+    - [x] Cài đặt băm dữ liệu gốc SHA-256 và ký số RSA-PSS: `sig = SK_A(SHA256(data))`
+    - [x] Cài đặt quy trình thẩm tra 3 lớp ở bên nhận:
+      - [x] Lớp 1: Chống phát lại (kiểm tra timestamp và message_id đã xử lý)
+      - [x] Lớp 2: Kiểm tra toàn vẹn tầng đối xứng (thẩm tra GCM Auth Tag)
+      - [x] Lớp 3: Kiểm tra xác thực nguồn gốc & chống chối bỏ (đối chiếu RSA Signature với SHA-256)
+  - [x] **Hệ thống API REST & WebSocket của Peer (`peer_node/api/`)**:
+    - [x] Endpoint bắt tay: `POST /handshake/init`, `POST /handshake/respond`, `POST /handshake/confirm`
+    - [x] Endpoint nhận khóa phiên: `POST /session/key`
+    - [x] Endpoint nhận dữ liệu bảo mật: `POST /message`, `POST /file`
+    - [x] Endpoint điều khiển chủ động: `POST /connect` (kết nối peer), `POST /send/message` (gửi tin nhắn qua proxy)
+    - [x] Kênh WebSocket `WS /dashboard`: Đẩy trạng thái khóa, session, tiến trình bắt tay và log giải mã thời gian thực
+  - [x] **Kiểm thử tích hợp luồng giao tiếp P2P**:
+    - [x] Viết kịch bản test CLI/curl giả lập Node A kết nối Node B, trao đổi khóa và truyền tin mã hóa thành công
 * **Tiêu chí hoàn thành (Deliverable)**:
   - Node A và Node B tự động hoàn thành chu trình bắt tay, trao đổi khóa phiên và mã hóa - giải mã dữ liệu thành công qua giao diện dòng lệnh (CLI/curl).
 
