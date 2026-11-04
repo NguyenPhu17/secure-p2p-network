@@ -15,6 +15,14 @@ from mitm_proxy.core.packet_store import PacketStore, PacketRecord
 logger = logging.getLogger("mitm_proxy.interceptor")
 
 
+def normalize_target_url(url: str) -> str:
+    """Normalize docker container hostnames from node_x to peer_x if necessary."""
+    for n in ("node_a", "node_b", "node_c"):
+        if f"://{n}:" in url:
+            url = url.replace(f"://{n}:", f"://peer_{n[-1]}:")
+    return url
+
+
 class Interceptor:
     def __init__(
         self,
@@ -128,6 +136,7 @@ class Interceptor:
         Intercepts the packet, stores it, broadcasts events,
         and either forwards immediately (passthrough) or holds for operator decision.
         """
+        target_url = normalize_target_url(target_url)
         # Parse JSON body
         try:
             json_data = json.loads(body_bytes.decode("utf-8"))

@@ -258,7 +258,7 @@ async def send_file(req: SendFileRequest, request: Request):
 @router.get("/peers", summary="Get Known & Discovered Peers")
 async def get_discovered_peers(request: Request):
     """Return all discovered peers from CA and local cache."""
-    _, _, _, discovery, _, _ = get_dependencies(request)
+    _, _, _, discovery, _, _, _ = get_dependencies(request)
     peers = await discovery.fetch_peers()
     return {
         "total": len(peers),
@@ -269,7 +269,7 @@ async def get_discovered_peers(request: Request):
 @router.get("/status", summary="Get Node Security & Identity Status")
 async def get_node_status(request: Request):
     """Return identity, certificates, authenticated peers, and active sessions."""
-    identity, handshake_mgr, session_mgr, _, proxy_url, ca_url = get_dependencies(request)
+    identity, handshake_mgr, session_mgr, _, proxy_url, ca_url, _ = get_dependencies(request)
 
     authenticated_peers = list(handshake_mgr.authenticated_peers.keys())
     active_sessions = [
@@ -296,7 +296,7 @@ async def get_node_status(request: Request):
 @router.get("/messages", summary="Get Message History & Verification Logs")
 async def get_messages_history(request: Request):
     """Return history of inbound and outbound messages with 3-layer verification logs."""
-    _, _, session_mgr, _, _, _ = get_dependencies(request)
+    _, _, session_mgr, _, _, _, _ = get_dependencies(request)
     return {
         "total": len(session_mgr.messages_history),
         "messages": session_mgr.messages_history,

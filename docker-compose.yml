@@ -56,7 +56,10 @@ services:
     ports:
       - "8001:8001"
     networks:
-      - p2p-secure-net
+      p2p-secure-net:
+        aliases:
+          - node_a
+          - peer_a
     environment:
       - NODE_ID=node_a
       - PORT=8001
@@ -81,7 +84,10 @@ services:
     ports:
       - "8002:8002"
     networks:
-      - p2p-secure-net
+      p2p-secure-net:
+        aliases:
+          - node_b
+          - peer_b
     environment:
       - NODE_ID=node_b
       - PORT=8002
@@ -106,7 +112,10 @@ services:
     ports:
       - "8003:8003"
     networks:
-      - p2p-secure-net
+      p2p-secure-net:
+        aliases:
+          - node_c
+          - peer_c
     environment:
       - NODE_ID=node_c
       - PORT=8003

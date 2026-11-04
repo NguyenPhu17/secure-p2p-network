@@ -555,36 +555,36 @@ sequenceDiagram
 ### Phase 4: Phát triển Giao diện Trực quan 3 Cột (Frontend Dashboard) 
 * **Mục tiêu**: Xây dựng giao diện web React trực quan, phản hồi tức thời theo thời gian thực, minh họa sinh động từng nguyên lý bảo mật.
 * **Checklist công việc (Tasks)**:
-  - [ ] **Khởi tạo Nền tảng Frontend & Quản lý Trạng thái**:
-    - [ ] Thiết lập bố cục 3 cột responsive (`App.tsx`): Cột 1 (Node A), Cột 2 (MITM), Cột 3 (Node B)
-    - [ ] Xây dựng Zustand store (`packetStore.ts`, `nodeStateStore.ts`) quản lý gói tin, kết nối và attack state
-    - [ ] Xây dựng custom hooks WebSocket:
-      - [ ] `useWebSocket.ts`: Hook generic quản lý kết nối và tự động reconnect
-      - [ ] `usePacketStream.ts`: Kết nối stream gói tin từ MITM Proxy (`/ws/stream`)
-      - [ ] `useNodeState.ts`: Kết nối stream trạng thái từ Node A, Node B và CA
-  - [ ] **Phát triển Cột 1 — Bảng Điều khiển Node A (Sender)**:
-    - [ ] `KeyStatusCard`: Hiển thị ID, vân tay Public Key, trạng thái X.509 Certificate do CA cấp, trạng thái khóa AES
-    - [ ] `PeerSelector & Connect`: Lấy danh sách node từ CA, nút bấm "Bắt tay & Xác thực"
-    - [ ] `ChatWindow`: Ô nhập tin nhắn văn bản, nút tải file đính kèm, nút bấm "Mã hóa & Gửi"
-  - [ ] **Phát triển Cột 2 — Bảng Phân tích MITM Proxy & Tấn công (Network Inspector)**:
-    - [ ] `MessageSequenceChart`: Vẽ trực quan luồng gói tin chuyển động giữa Node A ➔ Proxy ➔ Node B ➔ CA
-    - [ ] `PacketList`: Danh sách gói tin bắt được theo thời gian thực (hiển thị tag gói, chiều gửi, trạng thái HELD/FORWARDED)
-    - [ ] `PacketInspector`: Trình hiển thị cấu trúc JSON chi tiết với cú pháp màu mè, giải thích ý nghĩa từng trường mật mã (`nonce`, `ciphertext`, `tag`, `signature`)
-    - [ ] `AttackToolbar`:
-      - [ ] Công tắc chuyển đổi chế độ Passthrough ↔ Intercept/Hold
-      - [ ] Bộ nút tấn công cho gói tin đang bị giữ: "Tamper Data", "Replay", "Spoof Identity", và nút "Cho qua (Release)"
-  - [ ] **Phát triển Cột 3 — Bảng Điều khiển Node B (Receiver)**:
-    - [ ] `KeyStatusCard`: Hiển thị định danh, Public Key fingerprint và chứng chỉ của Node B
-    - [ ] `SecurityStatusLight`: Đèn trạng thái lớn (🟢 Xanh: Toàn vẹn, xác thực thành công / 🔴 Đỏ: Cảnh báo phát hiện tấn công)
-    - [ ] `DecryptionLog`: Hộp hiển thị quy trình thẩm tra 3 bước chi tiết:
+  - [x] **Khởi tạo Nền tảng Frontend & Quản lý Trạng thái**:
+    - [x] Thiết lập bố cục 3 cột responsive (`App.tsx`): Cột 1 (Node A), Cột 2 (MITM), Cột 3 (Node B)
+    - [x] Xây dựng Zustand store (`packetStore.ts`, `nodeStateStore.ts`) quản lý gói tin, kết nối và attack state
+    - [x] Xây dựng custom hooks WebSocket:
+      - [x] `useWebSocket.ts`: Hook generic quản lý kết nối và tự động reconnect
+      - [x] `usePacketStream.ts`: Kết nối stream gói tin từ MITM Proxy (`/ws/stream`)
+      - [x] `useNodeState.ts`: Kết nối stream trạng thái từ Node A, Node B và CA
+  - [x] **Phát triển Cột 1 — Bảng Điều khiển Node A (Sender)**:
+    - [x] `KeyStatusCard`: Hiển thị ID, vân tay Public Key, trạng thái X.509 Certificate do CA cấp, trạng thái khóa AES
+    - [x] `PeerSelector & Connect`: Lấy danh sách node từ CA, nút bấm "Bắt tay & Xác thực"
+    - [x] `ChatWindow`: Ô nhập tin nhắn văn bản, nút tải file đính kèm, nút bấm "Mã hóa & Gửi"
+  - [x] **Phát triển Cột 2 — Bảng Phân tích MITM Proxy & Tấn công (Network Inspector)**:
+    - [x] `MessageSequenceChart`: Vẽ trực quan luồng gói tin chuyển động giữa Node A ➔ Proxy ➔ Node B ➔ CA
+    - [x] `PacketList`: Danh sách gói tin bắt được theo thời gian thực (hiển thị tag gói, chiều gửi, trạng thái HELD/FORWARDED)
+    - [x] `PacketInspector`: Trình hiển thị cấu trúc JSON chi tiết với cú pháp màu mè, giải thích ý nghĩa từng trường mật mã (`nonce`, `ciphertext`, `tag`, `signature`)
+    - [x] `AttackToolbar`:
+      - [x] Công tắc chuyển đổi chế độ Passthrough ↔ Intercept/Hold
+      - [x] Bộ nút tấn công cho gói tin đang bị giữ: "Tamper Data", "Replay", "Spoof Identity", và nút "Cho qua (Release)"
+  - [x] **Phát triển Cột 3 — Bảng Điều khiển Node B (Receiver)**:
+    - [x] `KeyStatusCard`: Hiển thị định danh, Public Key fingerprint và chứng chỉ của Node B
+    - [x] `SecurityStatusLight`: Đèn trạng thái lớn (🟢 Xanh: Toàn vẹn, xác thực thành công / 🔴 Đỏ: Cảnh báo phát hiện tấn công)
+    - [x] `DecryptionLog`: Hộp hiển thị quy trình thẩm tra 3 bước chi tiết:
       - Bước 1: Kiểm tra chống phát lại (Nonce / Timestamp)
       - Bước 2: Kiểm tra toàn vẹn đối xứng (GCM Auth Tag)
       - Bước 3: Xác minh tính xác thực nguồn gốc (Chữ ký số RSA-PSS)
-    - [ ] `ReceivedContent`: Hiển thị nội dung tin nhắn plaintext và file tải về sau khi giải mã thành công
-  - [ ] **Kiểm thử Tích hợp & Hoàn thiện Trải nghiệm (E2E Test)**:
-    - [ ] Kiểm tra tương tác mượt mà giữa các WebSocket stream không bị nghẽn
-    - [ ] Thử nghiệm luồng gửi tin nhắn chuẩn: xem gói tin bay qua cột 2 và giải mã tại cột 3
-    - [ ] Thử nghiệm 3 nút tấn công: kiểm tra Cột 3 bật đèn đỏ cảnh báo chính xác mã lỗi
+    - [x] `ReceivedContent`: Hiển thị nội dung tin nhắn plaintext và file tải về sau khi giải mã thành công
+  - [x] **Kiểm thử Tích hợp & Hoàn thiện Trải nghiệm (E2E Test)**:
+    - [x] Kiểm tra tương tác mượt mà giữa các WebSocket stream không bị nghẽn
+    - [x] Thử nghiệm luồng gửi tin nhắn chuẩn: xem gói tin bay qua cột 2 và giải mã tại cột 3
+    - [x] Thử nghiệm 3 nút tấn công: kiểm tra Cột 3 bật đèn đỏ cảnh báo chính xác mã lỗi
 * **Tiêu chí hoàn thành (Deliverable)**:
   - Thao tác trên giao diện trực quan mượt mà, bấm nút gửi tin nhắn ở Cột 1 thấy gói tin bay qua Cột 2 và giải mã ở Cột 3. Khi bấm các nút tấn công, Cột 3 lập tức bật cảnh báo đỏ với lý do chính xác.
 

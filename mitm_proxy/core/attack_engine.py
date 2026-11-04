@@ -113,6 +113,9 @@ class AttackEngine:
     async def _forward_to_destination(
         self, target_url: str, payload: dict, headers: Optional[dict] = None
     ) -> Tuple[int, Any, dict]:
+        for n in ("node_a", "node_b", "node_c"):
+            if f"://{n}:" in target_url:
+                target_url = target_url.replace(f"://{n}:", f"://peer_{n[-1]}:")
         client = await self._get_client()
         fwd_headers = {"Content-Type": "application/json"}
         if headers:

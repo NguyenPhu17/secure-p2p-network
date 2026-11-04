@@ -31,11 +31,15 @@ class PeerDiscovery:
         """
         Resolve the reachable HTTP URL for a given peer_id.
         Priority:
-        1. Registered endpoint from CA (if provided).
+        1. Registered endpoint from CA (if provided, normalized for docker hostname).
         2. Container hostname in docker network: http://peer_<id_suffix>:<port> or http://<peer_id>:<port>.
         """
         if registered_endpoint and registered_endpoint.strip():
-            return registered_endpoint.strip().rstrip("/")
+            ep = registered_endpoint.strip().rstrip("/")
+            for n in ("node_a", "node_b", "node_c"):
+                if f"://{n}:" in ep:
+                    ep = ep.replace(f"://{n}:", f"://peer_{n[-1]}:")
+            return ep
 
         # Auto-fallback based on node_id naming convention
         port = DEFAULT_PORT_MAPPING.get(peer_id)
