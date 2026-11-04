@@ -26,8 +26,9 @@ def get_dependencies(request: Request):
     discovery = getattr(app_state, "discovery", None)
     proxy_url = getattr(app_state, "proxy_url", None)
     ca_url = getattr(app_state, "ca_url", None)
+    http_client = getattr(app_state, "http_client", None)
 
-    return identity, handshake_mgr, session_mgr, discovery, proxy_url, ca_url
+    return identity, handshake_mgr, session_mgr, discovery, proxy_url, ca_url, http_client
 
 
 class ConnectRequest(BaseModel):
@@ -37,7 +38,8 @@ class ConnectRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     target_peer_id: str = Field(..., description="Destination peer node ID")
-    content: str = Field(..., description="Plaintext message to encrypt and send")
+    content: Optional[str] = Field(default=None, description="Plaintext message to encrypt and send")
+    plaintext: Optional[str] = Field(default=None, description="Alias for content")
     target_url: Optional[str] = Field(default=None, description="Optional override URL for destination peer")
 
 
@@ -60,7 +62,7 @@ async def connect_to_peer(req: ConnectRequest, request: Request):
     5. Step 3: Generate AES-256 session key, wrap in RSA-OAEP, sign with RSA-PSS,
        and send SESSION_KEY_EXCHANGE.
     """
-    identity, handshake_mgr, session_mgr, discovery, proxy_url, _ = get_dependencies(request)
+    identity, handshake_mgr, session_mgr, discovery, proxy_url, _, http_client = get_dependencies(request)
     target_id = req.target_peer_id.strip()
 
     # 1. Resolve endpoint
@@ -86,6 +88,7 @@ async def connect_to_peer(req: ConnectRequest, request: Request):
         target_url=f"{target_url.rstrip('/')}/handshake/init",
         payload=init_pkt,
         proxy_url=proxy_url,
+        client=http_client,
     )
 
     if status_code != 200:
@@ -116,6 +119,7 @@ async def connect_to_peer(req: ConnectRequest, request: Request):
         target_url=f"{target_url.rstrip('/')}/handshake/confirm",
         payload=confirm_pkt,
         proxy_url=proxy_url,
+        client=http_client,
     )
 
     if status_code != 200:
@@ -142,6 +146,7 @@ async def connect_to_peer(req: ConnectRequest, request: Request):
         target_url=f"{target_url.rstrip('/')}/session/key",
         payload=exchange_pkt,
         proxy_url=proxy_url,
+        client=http_client,
     )
 
     if status_code != 200:
@@ -174,7 +179,7 @@ async def send_message(req: SendMessageRequest, request: Request):
     compute SHA-256 digest, sign with RSA-PSS private key,
     and send SECURE_MESSAGE packet to destination peer via proxy.
     """
-    identity, handshake_mgr, session_mgr, discovery, proxy_url, _ = get_dependencies(request)
+    identity, handshake_mgr, session_mgr, discovery, proxy_url, _, http_client = get_dependencies(request)
     target_id = req.target_peer_id.strip()
 
     # 1. Resolve endpoint
@@ -182,9 +187,11 @@ async def send_message(req: SendMessageRequest, request: Request):
     if not target_url:
         raise HTTPException(status_code=400, detail=f"Cannot resolve network endpoint for peer '{target_id}'")
 
+    message_text = req.content if req.content is not None else (req.plaintext or "")
+
     # 2. Encrypt message (AES-GCM + SHA-256 + RSA-PSS)
     try:
-        msg_pkt = session_mgr.encrypt_message(target_id, req.content)
+        msg_pkt = session_mgr.encrypt_message(target_id, message_text)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -192,7 +199,7 @@ async def send_message(req: SendMessageRequest, request: Request):
         "event": "MESSAGE_SENT",
         "to": target_id,
         "message_id": msg_pkt["message_id"],
-        "plaintext": req.content,
+        "plaintext": message_text,
         "packet": msg_pkt,
     })
 
@@ -201,9 +208,11 @@ async def send_message(req: SendMessageRequest, request: Request):
         target_url=f"{target_url.rstrip('/')}/message",
         payload=msg_pkt,
         proxy_url=proxy_url,
+        client=http_client,
     )
 
     return {
+        "status": "DELIVERED" if status_code == 200 else "FAILED",
         "status_code": status_code,
         "message_id": msg_pkt["message_id"],
         "packet_sent": msg_pkt,
@@ -216,7 +225,7 @@ async def send_file(req: SendFileRequest, request: Request):
     """
     Encrypt file with AES-256-GCM and transmit via SECURE_FILE packet.
     """
-    identity, handshake_mgr, session_mgr, discovery, proxy_url, _ = get_dependencies(request)
+    identity, handshake_mgr, session_mgr, discovery, proxy_url, _, http_client = get_dependencies(request)
     target_id = req.target_peer_id.strip()
 
     target_url = req.target_url or discovery.get_peer_url(target_id)
@@ -233,9 +242,11 @@ async def send_file(req: SendFileRequest, request: Request):
         target_url=f"{target_url.rstrip('/')}/file",
         payload=file_pkt,
         proxy_url=proxy_url,
+        client=http_client,
     )
 
     return {
+        "status": "DELIVERED" if status_code == 200 else "FAILED",
         "status_code": status_code,
         "filename": req.filename,
         "size_bytes": len(file_bytes),

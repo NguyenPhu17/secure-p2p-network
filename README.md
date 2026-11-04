@@ -108,6 +108,6 @@ Sau khi khởi chạy, kiểm tra trạng thái hoạt động:
 - [x] **Phase 0: Scaffolding & Khởi tạo Hạ tầng**
 - [x] **Phase 1: Xây dựng CA Server & Thư viện Mật mã Cốt lõi**
 - [x] **Phase 2: Phát triển Peer Node — Định danh, Bắt tay & Khóa phiên**
-- [ ] **Phase 3: Xây dựng MITM Proxy & Công cụ Tấn công Gói tin**
+- [x] **Phase 3: Xây dựng MITM Proxy & Công cụ Tấn công Gói tin**
 - [ ] **Phase 4: Phát triển Giao diện Trực quan 3 Cột (Frontend Dashboard)**
 

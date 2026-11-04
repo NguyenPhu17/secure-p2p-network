@@ -517,36 +517,36 @@ sequenceDiagram
 ### Phase 3: Xây dựng MITM Proxy & Công cụ Tấn công Gói tin 
 * **Mục tiêu**: Đóng vai trò môi trường mạng truyền dẫn trung gian, cho phép Dashboard bắt giữ, kiểm tra gói tin và can thiệp thực hiện các kịch bản tấn công (§9.1.1).
 * **Checklist công việc (Tasks)**:
-  - [ ] **Lớp Chặn bắt Gói tin (`mitm_proxy/core/interceptor.py`)**:
-    - [ ] Lắng nghe HTTP request trung gian giữa các peer dựa trên header định tuyến `X-Target-URL`
-    - [ ] Trích xuất metadata gói tin: `packet_id`, hướng truyền (`direction`), loại gói tin (`type`), timestamp
-    - [ ] Cài đặt 2 chế độ chuyển tiếp:
-      - [ ] Chế độ Passthrough: Gói tin được phân tích và forward ngay lập tức đến đích
-      - [ ] Chế độ Hold (Intercept): Gói tin bị giữ lại hàng đợi, chờ lệnh từ Dashboard UI
-  - [ ] **Kho lưu trữ Gói tin (`mitm_proxy/core/packet_store.py`)**:
-    - [ ] Cấu trúc Ring Buffer lưu trữ 500 gói tin gần nhất
-    - [ ] Hỗ trợ tra cứu nhanh gói tin theo `packet_id` và lọc theo trạng thái (`HELD`, `FORWARDED`, `TAMPERED`)
-  - [ ] **Engine Mô phỏng 3 Kịch bản Tấn công (`mitm_proxy/core/attack_engine.py`)**:
-    - [ ] **Kịch bản 1 — Sửa đổi Dữ liệu (Tamper Data)**:
-      - [ ] Lật đảo 1 hoặc nhiều bit ngẫu nhiên trong trường `ciphertext` hoặc `iv`
-      - [ ] Chuyển tiếp gói đã sửa đổi tới node đích
-      - [ ] Kiểm tra phản hồi lỗi từ node nhận: `INTEGRITY_CHECK_FAILED` (GCM auth tag mismatch)
-    - [ ] **Kịch bản 2 — Phát lại Gói tin (Replay Attack)**:
-      - [ ] Chọn gói tin cũ hợp lệ (`HANDSHAKE_INIT` hoặc `SECURE_MESSAGE`) từ packet store và gửi lại lần 2
-      - [ ] Kiểm tra phản hồi lỗi từ node nhận: `REPLAY_ATTACK_DETECTED` (trùng nonce hoặc message_id)
-    - [ ] **Kịch bản 3 — Giả mạo Danh tính (Spoof Identity)**:
-      - [ ] Tự sinh chứng chỉ giả mạo (Self-signed không được CA ký hoặc do CA lạ ký)
-      - [ ] Thay thế Certificate trong gói `HANDSHAKE_INIT` bằng cert giả mạo
-      - [ ] Kiểm tra phản hồi lỗi từ node nhận: `CERTIFICATE_VERIFICATION_FAILED`
-  - [ ] **API Điều khiển & Kênh WebSocket Stream (`mitm_proxy/api/`)**:
-    - [ ] `POST /attack/mode`: Bật/tắt chế độ Hold vs Passthrough
-    - [ ] `POST /attack/tamper`: Chỉ đạo proxy sửa bit trên gói tin cụ thể
-    - [ ] `POST /attack/replay`: Chỉ đạo proxy phát lại một gói tin trong lịch sử
-    - [ ] `POST /attack/spoof`: Chỉ đạo proxy tráo đổi chứng chỉ số
-    - [ ] `POST /attack/release`: Cho phép gói tin đang bị giữ tiếp tục được gửi đi
-    - [ ] `WS /ws/stream`: Phát broadcast tức thời các sự kiện `PACKET_INTERCEPTED`, `ATTACK_RESULT` ra Dashboard UI
-  - [ ] **Kiểm thử mô phỏng tấn công**:
-    - [ ] Kiểm thử lần lượt 3 kịch bản tấn công qua API và xác thực phản hồi từ chối từ node nhận
+  - [x] **Lớp Chặn bắt Gói tin (`mitm_proxy/core/interceptor.py`)**:
+    - [x] Lắng nghe HTTP request trung gian giữa các peer dựa trên header định tuyến `X-Target-URL`
+    - [x] Trích xuất metadata gói tin: `packet_id`, hướng truyền (`direction`), loại gói tin (`type`), timestamp
+    - [x] Cài đặt 2 chế độ chuyển tiếp:
+      - [x] Chế độ Passthrough: Gói tin được phân tích và forward ngay lập tức đến đích
+      - [x] Chế độ Hold (Intercept): Gói tin bị giữ lại hàng đợi, chờ lệnh từ Dashboard UI
+  - [x] **Kho lưu trữ Gói tin (`mitm_proxy/core/packet_store.py`)**:
+    - [x] Cấu trúc Ring Buffer lưu trữ 500 gói tin gần nhất
+    - [x] Hỗ trợ tra cứu nhanh gói tin theo `packet_id` và lọc theo trạng thái (`HELD`, `FORWARDED`, `TAMPERED`)
+  - [x] **Engine Mô phỏng 3 Kịch bản Tấn công (`mitm_proxy/core/attack_engine.py`)**:
+    - [x] **Kịch bản 1 — Sửa đổi Dữ liệu (Tamper Data)**:
+      - [x] Lật đảo 1 hoặc nhiều bit ngẫu nhiên trong trường `ciphertext` hoặc `iv`
+      - [x] Chuyển tiếp gói đã sửa đổi tới node đích
+      - [x] Kiểm tra phản hồi lỗi từ node nhận: `INTEGRITY_CHECK_FAILED` (GCM auth tag mismatch)
+    - [x] **Kịch bản 2 — Phát lại Gói tin (Replay Attack)**:
+      - [x] Chọn gói tin cũ hợp lệ (`HANDSHAKE_INIT` hoặc `SECURE_MESSAGE`) từ packet store và gửi lại lần 2
+      - [x] Kiểm tra phản hồi lỗi từ node nhận: `REPLAY_ATTACK_DETECTED` (trùng nonce hoặc message_id)
+    - [x] **Kịch bản 3 — Giả mạo Danh tính (Spoof Identity)**:
+      - [x] Tự sinh chứng chỉ giả mạo (Self-signed không được CA ký hoặc do CA lạ ký)
+      - [x] Thay thế Certificate trong gói `HANDSHAKE_INIT` bằng cert giả mạo
+      - [x] Kiểm tra phản hồi lỗi từ node nhận: `CERTIFICATE_VERIFICATION_FAILED`
+  - [x] **API Điều khiển & Kênh WebSocket Stream (`mitm_proxy/api/`)**:
+    - [x] `POST /attack/mode`: Bật/tắt chế độ Hold vs Passthrough
+    - [x] `POST /attack/tamper`: Chỉ đạo proxy sửa bit trên gói tin cụ thể
+    - [x] `POST /attack/replay`: Chỉ đạo proxy phát lại một gói tin trong lịch sử
+    - [x] `POST /attack/spoof`: Chỉ đạo proxy tráo đổi chứng chỉ số
+    - [x] `POST /attack/release`: Cho phép gói tin đang bị giữ tiếp tục được gửi đi
+    - [x] `WS /ws/stream`: Phát broadcast tức thời các sự kiện `PACKET_INTERCEPTED`, `ATTACK_RESULT` ra Dashboard UI
+  - [x] **Kiểm thử mô phỏng tấn công**:
+    - [x] Kiểm thử lần lượt 3 kịch bản tấn công qua API và xác thực phản hồi từ chối từ node nhận
 * **Tiêu chí hoàn thành (Deliverable)**:
   - Có thể thử nghiệm can thiệp lật bit hoặc phát lại gói tin qua API và ghi nhận được phản hồi lỗi chính xác từ Node nhận.
 
