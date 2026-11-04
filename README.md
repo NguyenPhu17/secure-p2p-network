@@ -106,11 +106,7 @@ Sau khi khởi chạy, kiểm tra trạng thái hoạt động:
 ## 🛠️ Trạng thái Triển khai (Roadmap)
 
 - [x] **Phase 0: Scaffolding & Khởi tạo Hạ tầng**
-  - Cấu trúc thư mục Monorepo chuẩn hóa
-  - Thiết lập FastAPI và Healthcheck cho `ca_server`, `peer_node`, `mitm_proxy`
-  - Khởi tạo ứng dụng React 19 + TypeScript + Vite + TailwindCSS cho `frontend_ui`
-  - Đóng gói Dockerfile cho tất cả 4 thành phần & cấu hình `docker-compose.yml` với bridge network `p2p-secure-net`
-- [ ] **Phase 1: Xây dựng CA Server & Thư viện Mật mã Cốt lõi**
+- [x] **Phase 1: Xây dựng CA Server & Thư viện Mật mã Cốt lõi**
 - [ ] **Phase 2: Phát triển Peer Node — Định danh, Bắt tay & Khóa phiên**
 - [ ] **Phase 3: Xây dựng MITM Proxy & Công cụ Tấn công Gói tin**
 - [ ] **Phase 4: Phát triển Giao diện Trực quan 3 Cột (Frontend Dashboard)**

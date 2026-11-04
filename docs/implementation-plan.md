@@ -445,31 +445,31 @@ sequenceDiagram
 ### Phase 1: Xây dựng CA Server & Thư viện Mật mã Cốt lõi 
 * **Mục tiêu**: Hoàn thiện trung tâm chứng thực khóa công khai (PKI) theo chuẩn X.509 (§9.2.4).
 * **Checklist công việc (Tasks)**:
-  - [ ] **Cài đặt Module Mật mã (`ca_server/core/crypto.py`)**:
-    - [ ] Hàm sinh cặp khóa RSA 2048-bit (Private Key & Public Key)
-    - [ ] Hàm tạo CA Root Self-signed Certificate sử dụng RSA-SHA256
-    - [ ] Hàm tạo và ký chứng chỉ số X.509 Certificate cho Peer node khi đăng ký
-    - [ ] Hàm xuất và nạp khóa/chứng chỉ dạng PEM string
-    - [ ] Hàm xác thực tính hợp lệ của Certificate sử dụng CA Root Public Key
-  - [ ] **Cài đặt Module Lưu trữ Chứng chỉ (`ca_server/core/certificate_store.py`)**:
-    - [ ] Quản lý bộ nhớ in-memory lưu trữ danh sách Certificate đã cấp
-    - [ ] Cơ chế đồng bộ và lưu trữ bền vững chứng chỉ xuống file `data/certs.json`
-    - [ ] Quản lý danh sách thu hồi chứng chỉ (CRL - Certificate Revocation List)
-  - [ ] **Xây dựng REST API Endpoints (`ca_server/api/routes_cert.py`)**:
-    - [ ] `POST /register`: Nhận Public Key của Peer, thẩm tra thông tin định danh, cấp phát X.509 Certificate
-    - [ ] `GET /cert/{peer_id}`: Tra cứu thông tin và PEM của chứng chỉ số theo `peer_id`
-    - [ ] `GET /ca-cert`: Tải chứng chỉ công khai của CA để các node dùng xác thực chuỗi tin cậy
-    - [ ] `GET /peers`: Trả về danh sách tất cả các active peer đã đăng ký (phục vụ Peer Discovery)
-    - [ ] `POST /revoke/{peer_id}`: Thu hồi chứng chỉ khi node bị nghi ngờ lộ khóa bí mật
-    - [ ] `GET /crl`: Trả về danh sách chứng chỉ đã bị thu hồi
-  - [ ] **Kênh WebSocket Sự kiện (`ca_server/api/routes_ws.py`)**:
-    - [ ] Thiết lập WebSocket endpoint `WS /events`
-    - [ ] Phát broadcast event `PEER_REGISTERED` khi có node mới đăng ký
-    - [ ] Phát broadcast event `CERT_REVOKED` khi có chứng chỉ bị thu hồi
-  - [ ] **Viết Unit Tests & Xác thực (`ca_server/tests/test_crypto.py`)**:
-    - [ ] Test quy trình sinh khóa RSA và tạo Root CA
-    - [ ] Test ký chứng chỉ số cho peer và kiểm tra tính hợp lệ bằng CA Public Key
-    - [ ] Test phát hiện chứng chỉ bị giả mạo chữ ký hoặc chứng chỉ đã bị thu hồi
+  - [x] **Cài đặt Module Mật mã (`ca_server/core/crypto.py`)**:
+    - [x] Hàm sinh cặp khóa RSA 2048-bit (Private Key & Public Key)
+    - [x] Hàm tạo CA Root Self-signed Certificate sử dụng RSA-SHA256
+    - [x] Hàm tạo và ký chứng chỉ số X.509 Certificate cho Peer node khi đăng ký
+    - [x] Hàm xuất và nạp khóa/chứng chỉ dạng PEM string
+    - [x] Hàm xác thực tính hợp lệ của Certificate sử dụng CA Root Public Key
+  - [x] **Cài đặt Module Lưu trữ Chứng chỉ (`ca_server/core/certificate_store.py`)**:
+    - [x] Quản lý bộ nhớ in-memory lưu trữ danh sách Certificate đã cấp
+    - [x] Cơ chế đồng bộ và lưu trữ bền vững chứng chỉ xuống file `data/certs.json`
+    - [x] Quản lý danh sách thu hồi chứng chỉ (CRL - Certificate Revocation List)
+  - [x] **Xây dựng REST API Endpoints (`ca_server/api/routes_cert.py`)**:
+    - [x] `POST /register`: Nhận Public Key của Peer, thẩm tra thông tin định danh, cấp phát X.509 Certificate
+    - [x] `GET /cert/{peer_id}`: Tra cứu thông tin và PEM của chứng chỉ số theo `peer_id`
+    - [x] `GET /ca-cert`: Tải chứng chỉ công khai của CA để các node dùng xác thực chuỗi tin cậy
+    - [x] `GET /peers`: Trả về danh sách tất cả các active peer đã đăng ký (phục vụ Peer Discovery)
+    - [x] `POST /revoke/{peer_id}`: Thu hồi chứng chỉ khi node bị nghi ngờ lộ khóa bí mật
+    - [x] `GET /crl`: Trả về danh sách chứng chỉ đã bị thu hồi
+  - [x] **Kênh WebSocket Sự kiện (`ca_server/api/routes_ws.py`)**:
+    - [x] Thiết lập WebSocket endpoint `WS /events`
+    - [x] Phát broadcast event `PEER_REGISTERED` khi có node mới đăng ký
+    - [x] Phát broadcast event `CERT_REVOKED` khi có chứng chỉ bị thu hồi
+  - [x] **Viết Unit Tests & Xác thực (`ca_server/tests/test_crypto.py`)**:
+    - [x] Test quy trình sinh khóa RSA và tạo Root CA
+    - [x] Test ký chứng chỉ số cho peer và kiểm tra tính hợp lệ bằng CA Public Key
+    - [x] Test phát hiện chứng chỉ bị giả mạo chữ ký hoặc chứng chỉ đã bị thu hồi
 * **Tiêu chí hoàn thành (Deliverable)**:
   - Unit test cho quy trình sinh khóa, ký chứng chỉ, và xác minh chuỗi tin cậy (Certificate Chain) chạy đạt 100%.
 
