@@ -1,0 +1,122 @@
+/**
+ * Giao thức truyền thông cốt lõi giữa các thành phần (Registry, Peer, Channel)
+ * Toàn bộ tin nhắn trao đổi qua mạng TCP đều tuân theo chuẩn BaseMessage.
+ */
+
+export enum MessageType {
+  // Registry & Discovery
+  REGISTER = "REGISTER",
+  REGISTER_ACK = "REGISTER_ACK",
+  HEARTBEAT = "HEARTBEAT",
+  HEARTBEAT_ACK = "HEARTBEAT_ACK",
+  PEER_JOINED = "PEER_JOINED",
+  PEER_LEFT = "PEER_LEFT",
+
+  // P2P Chat
+  CHAT = "CHAT",
+  CHAT_ACK = "CHAT_ACK",
+
+  // P2P File Transfer
+  FILE_META = "FILE_META",
+  FILE_CHUNK = "FILE_CHUNK",
+  FILE_ACK = "FILE_ACK",
+
+  // Generic Error
+  ERROR = "ERROR",
+
+  // Placeholder cho KDC / Security Handshake
+  SECURITY_STUB = "SECURITY_STUB"
+}
+
+/**
+ * Thông tin định danh và địa chỉ kết nối của một Peer
+ */
+export interface PeerInfo {
+  displayName: string;
+  ip: string;
+  tcpPort: number;
+  lastSeen?: number;
+}
+
+/**
+ * Cấu trúc tin nhắn chuẩn trao đổi qua TCP
+ */
+export interface BaseMessage<T = any> {
+  type: MessageType;          // Loại thông điệp
+  message_id: string;        // UUID duy nhất chống trùng lặp
+  sender: string;            // Tên người gửi
+  receiver: string;          // Tên người nhận ("REGISTRY", "BROADCAST", hoặc tên peer đối phương)
+  seq: number;               // Số thứ tự gói tin giữa 2 thực thể
+  timestamp: number;         // Unix timestamp (ms)
+  payload: T;                // Dữ liệu nghiệp vụ chi tiết
+
+  // ==========================================
+  // THIẾT KẾ CHỖ CẮM BẢO MẬT (Giai đoạn 1 để null)
+  // ==========================================
+  // TODO(SECURITY): Nonce ngẫu nhiên dùng 1 lần để chống tấn công phát lại (Replay attack)
+  nonce: string | null;
+  // TODO(SECURITY): Mã xác thực thông điệp (HMAC) hoặc Chữ ký số (Digital Signature) để chống giả mạo
+  mac_or_signature: string | null;
+}
+
+// -------------------------------------------------------------
+// PAYLOADS CHO TỪNG LOẠI MESSAGE
+// -------------------------------------------------------------
+
+export interface RegisterPayload {
+  ip: string;
+  tcpPort: number;
+}
+
+export interface RegisterAckPayload {
+  status: "OK" | "REJECTED";
+  reason?: string;
+  peers: PeerInfo[];
+}
+
+export interface HeartbeatAckPayload {
+  serverTime: number;
+}
+
+export interface PeerLeftPayload {
+  displayName: string;
+  reason?: string;
+}
+
+export interface ChatPayload {
+  body: string;
+}
+
+export interface ChatAckPayload {
+  ack_message_id: string; // message_id của tin nhắn CHAT gốc
+}
+
+export interface FileMetaPayload {
+  file_id: string;
+  fileName: string;
+  fileSize: number;
+  chunkSize: number;
+  totalChunks: number;
+  fileHash: string; // Checksum toàn bộ file (TODO(SECURITY): Thay bằng SHA-256 + Chữ ký)
+}
+
+export interface FileChunkPayload {
+  file_id: string;
+  chunkIndex: number;
+  totalChunks: number;
+  chunkHash: string; // Checksum của chunk này
+  data: string;      // Base64 chunk nhị phân
+}
+
+export interface FileAckPayload {
+  file_id: string;
+  chunkIndex: number;
+  status: "OK" | "RETRY";
+  error?: string;
+}
+
+export interface ErrorPayload {
+  code: string;
+  message: string;
+}
+

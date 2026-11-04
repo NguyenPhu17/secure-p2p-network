@@ -1,16 +1,10 @@
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.pytest_cache/
-.coverage
-frontend_ui/node_modules
-frontend_ui/dist
-*/data/
+node_modules
+ui
+dist
 .git
-.gitignore
-.env
+tests
+downloads
+data/*.db*
+logs
+*.log
 

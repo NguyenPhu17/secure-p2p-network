@@ -1,0 +1,15 @@
+{
+  "registry": {
+    "host": "127.0.0.1",
+    "port": 7000,
+    "heartbeatIntervalMs": 5000,
+    "heartbeatTimeoutMs": 15000,
+    "checkIntervalMs": 3000
+  },
+  "peer": {
+    "defaultChunkSize": 65536,
+    "reconnectIntervalMs": 5000,
+    "maxLogEntries": 100
+  }
+}
+

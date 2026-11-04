@@ -1,113 +1,124 @@
-# 🔐 Secure P2P Network with CA/KDC & MITM Proxy
-> **Môn học**: Các Hệ Thống Phân Tán (Distributed Systems)  
-> **Tài liệu tham khảo**: *Distributed Systems 4th Ed. — Maarten van Steen & Andrew S. Tanenbaum (§9.1–9.3)*
+# Hệ thống Chat & Chia sẻ File P2P Bảo mật với KDC
+## Đề tài môn học: Các hệ thống phân tán (Distributed Systems)
+
+Dự án triển khai theo kiến trúc mạng phân tán Peer-to-Peer (P2P) kết hợp mô hình Trung tâm Phân phối Khóa (Key Distribution Center - KDC).
 
 ---
 
-## 📌 Tổng quan Dự án
-
-Hệ thống mạng phân tán ngang hàng (Peer-to-Peer) an toàn tích hợp Trung tâm chứng thực số (CA/KDC) và một trạm Proxy đánh cắp/can thiệp dữ liệu trung gian (MITM Intercept Proxy). Dự án cho phép:
-1. **Đăng ký định danh & cấp chứng chỉ X.509**: Node đăng ký Public Key lên CA Server và nhận Digital Certificate có chữ ký điện tử RSA-SHA256.
-2. **Xác thực lẫn nhau (Mutual Authentication)**: Giao thức bắt tay 3 bước với Challenge-Response (Nonce) chống tấn công phát lại (Replay Attack).
-3. **Trao đổi khóa phiên (Session Key Exchange)**: Sinh khóa đối xứng AES-256-GCM ngẫu nhiên, mã hóa bảo vệ bằng RSA-OAEP và ký số RSA-PSS chống chối bỏ.
-4. **Truyền tin nhắn & file bảo mật**: Mã hóa dữ liệu bằng AES-256-GCM, kiểm tra tính toàn vẹn 3 lớp (Nonce/Timestamp, Auth Tag, RSA Signature).
-5. **Mô phỏng tấn công thời gian thực qua MITM Proxy**: Can thiệp gói tin trực tiếp từ Dashboard: Tamper (sửa bit ciphertext), Replay (phát lại bản tin cũ), Spoof (giả mạo chứng chỉ số).
-6. **Giao diện trực quan 3 cột (React Dashboard)**: Quan sát dòng gói tin chuyển động theo thời gian thực (Sequence chart & Packet Inspector) giữa Sender (Node A), MITM Proxy, và Receiver (Node B).
+## 📌 PHẠM VI GIAI ĐOẠN 1
+- **Phần phân tán**: Registry Node (Mock KDC), Peer Backend mở kết nối TCP Socket thô trực tiếp giữa các Peer, cơ chế Framing 4-bytes Length-prefixed chống vỡ/dính gói tin, chia nhỏ file thành chunk 64KB, hàng đợi tin nhắn offline, chống trùng tin nhắn qua UUID (`message_id`).
+- **Lưu trữ cục bộ**: Mỗi Peer sở hữu database SQLite độc lập (`better-sqlite3` / `node:sqlite`), tối ưu hóa RAM với WAL mode và giới hạn cache 2MB.
+- **Giao diện**: React + Vite + Tailwind CSS với bố cục 3 vùng (Sidebar danh sách peer, Khung chat & tiến độ file, Panel xem Protocol Logs trực tiếp).
+- **Trạng thái bảo mật**: Truyền **Plaintext** (có chủ đích) phục vụ bắt gói tin Wireshark so sánh trước/sau khi cài đặt KDC và mã hóa ở Giai đoạn 2.
 
 ---
 
-## 🏗️ Cấu trúc Mạng & Cổng Dịch vụ (Docker Bridge: `p2p-secure-net`)
-
-| Dịch vụ | Docker Container | Port Host | Mô tả chức năng |
-| :--- | :--- | :--- | :--- |
-| **CA / KDC Server** | `p2p_ca_server` | `8000` | Root Certificate Authority, cấp X.509 certs, danh bạ peer discovery |
-| **Peer Node A** | `p2p_peer_a` | `8001` | Servant Node A (Sender/Initiator) |
-| **Peer Node B** | `p2p_peer_b` | `8002` | Servant Node B (Receiver/Responder) |
-| **Peer Node C** | `p2p_peer_c` | `8003` | Servant Node C (Additional peer) |
-| **MITM Proxy** | `p2p_mitm_proxy` | `8080` | Reverse Proxy chặn bắt HTTP/WS, phân tích gói tin, can thiệp tấn công |
-| **Frontend UI** | `p2p_frontend_ui` | `3000` | Bảng điều khiển giám sát 3 cột (React + Vite + TailwindCSS) |
-
----
-
-## 📂 Cấu trúc Thư mục Monorepo
-
-```
-secure-p2p-network/
-├── docker-compose.yml              # Quản lý toàn bộ 6 container trong mạng ảo
-├── .env.example                    # Cấu hình biến môi trường mẫu
-├── .gitignore                      # Cấu hình loại trừ git
-├── README.md                       # Tài liệu hướng dẫn
-├── docs/
-│   └── implementation-plan.md     # Kế hoạch chi tiết 5 giai đoạn
-├── ca_server/                      # PKI Root CA Server (FastAPI)
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── config.py
-│   ├── main.py
-│   ├── core/                       # Crypto primitives, cert store
-│   └── api/                        # REST & WebSocket endpoints
-├── peer_node/                      # Peer Node Servant (FastAPI)
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── config.py
-│   ├── main.py
-│   ├── core/                       # Identity, handshake, session management
-│   └── api/                        # Peer REST endpoints & dashboard WS
-├── mitm_proxy/                     # MITM Relay Proxy (FastAPI + Async HTTP)
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── config.py
-│   ├── main.py
-│   ├── core/                       # Interceptor, packet store, attack engine
-│   └── api/                        # Control API & stream WS
-├── frontend_ui/                    # Giao diện giám sát trực quan (React + TS + Tailwind)
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── src/
-│   │   ├── components/             # NodePanel, MitmPanel, PacketInspector
-│   │   ├── hooks/                  # WebSocket hooks
-│   │   └── store/                  # Zustand state
-└── shared/                         # Thư viện tiện ích dùng chung
-    └── crypto_utils.py
-```
-
----
-
-## 🚀 Hướng dẫn Khởi chạy Nhanh
-
-### 1. Khởi chạy bằng Docker Compose (Khuyên dùng)
-
-Đảm bảo máy tính đã cài đặt **Docker Desktop** và Docker daemon đang hoạt động:
+## 🛠️ CÀI ĐẶT & CHUẨN BỊ
+Yêu cầu: **Node.js v20+** (Khuyến nghị Node.js v22 hoặc v24).
 
 ```bash
-# Khởi động toàn bộ 6 service
-docker compose up --build -d
+# Cài đặt thư viện Backend
+npm install
 
-# Xem log các service
-docker compose logs -f
+# Cài đặt thư viện Frontend UI
+cd ui
+npm install
+cd ..
+```
 
-# Dừng hệ thống
+---
+
+## 🐳 CÁCH 1: CHẠY BACKEND TRÊN DOCKER + FRONTEND TRÊN TERMINAL (KHUYẾN NGHỊ)
+
+Toàn bộ **Registry và 3 Peer Backend (Alice, Bob, Charlie)** được đóng gói chạy tự động trong Docker; **Frontend UI** chạy trực tiếp trên terminal của máy bạn.
+
+### Bước 1: Khởi động toàn bộ Backend trong Docker
+```bash
+docker compose up -d
+```
+Lệnh này sẽ tự động khởi động:
+- `p2p-registry` trên cổng `7000`
+- `p2p-peer-alice` trên TCP `8001`, WebSocket UI `3001`
+- `p2p-peer-bob` trên TCP `8002`, WebSocket UI `3002`
+- `p2p-peer-charlie` trên TCP `8003`, WebSocket UI `3003`
+*(Dữ liệu SQLite được đồng bộ ra thư mục `./data` trên máy bạn; file tải về nằm tại `./downloads`)*.
+
+### Bước 2: Khởi động React Frontend UI trên Terminal
+Mở một cửa sổ Terminal trên máy bạn:
+```bash
+cd ui
+npm run dev
+```
+
+### Bước 3: Mở trình duyệt trải nghiệm
+- **Alice**: [http://localhost:5173/?port=3001](http://localhost:5173/?port=3001)
+- **Bob**: [http://localhost:5173/?port=3002](http://localhost:5173/?port=3002)
+- **Charlie**: [http://localhost:5173/?port=3003](http://localhost:5173/?port=3003)
+
+Khi muốn dừng Docker:
+```bash
 docker compose down
 ```
 
-### 2. Kiểm tra Healthcheck của các Dịch vụ
+---
 
-Sau khi khởi chạy, kiểm tra trạng thái hoạt động:
+## 💻 CÁCH 2: CHẠY THỦ CÔNG TRÊN TERMINAL (KHÔNG DÙNG DOCKER)
 
-* **CA Server**: [http://localhost:8000/health](http://localhost:8000/health) (API Docs: [http://localhost:8000/docs](http://localhost:8000/docs))
-* **Peer Node A**: [http://localhost:8001/health](http://localhost:8001/health) (API Docs: [http://localhost:8001/docs](http://localhost:8001/docs))
-* **Peer Node B**: [http://localhost:8002/health](http://localhost:8002/health) (API Docs: [http://localhost:8002/docs](http://localhost:8002/docs))
-* **Peer Node C**: [http://localhost:8003/health](http://localhost:8003/health) (API Docs: [http://localhost:8003/docs](http://localhost:8003/docs))
-* **MITM Proxy**: [http://localhost:8080/health](http://localhost:8080/health) (API Docs: [http://localhost:8080/docs](http://localhost:8080/docs))
-* **Frontend Dashboard**: [http://localhost:3000](http://localhost:3000)
+### 1. Khởi động Registry (Mock KDC)
+```bash
+npm run registry
+# Lắng nghe tại TCP port 7000
+```
+
+### 2. Khởi động các Peer Backend
+Mở các cửa sổ Terminal riêng:
+
+```bash
+# Terminal Peer 1 (Alice):
+npx tsx peer/index.ts --name Alice --tcpPort 8001 --uiPort 3001
+
+# Terminal Peer 2 (Bob):
+npx tsx peer/index.ts --name Bob --tcpPort 8002 --uiPort 3002
+
+# Terminal Peer 3 (Charlie):
+npx tsx peer/index.ts --name Charlie --tcpPort 8003 --uiPort 3003
+```
+
+### 3. Khởi động React UI
+```bash
+cd ui
+npm run dev
+```
+Mở trình duyệt:
+- Tab 1: `http://localhost:5173/?port=3001` (Giao diện của Alice)
+- Tab 2: `http://localhost:5173/?port=3002` (Giao diện của Bob)
+- Tab 3: `http://localhost:5173/?port=3003` (Giao diện của Charlie)
 
 ---
 
-## 🛠️ Trạng thái Triển khai (Roadmap)
+## 🧪 CHẠY BỘ KIỂM THỬ TỰ ĐỘNG (AUTOMATED TEST SUITE)
 
-- [x] **Phase 0: Scaffolding & Khởi tạo Hạ tầng**
-- [x] **Phase 1: Xây dựng CA Server & Thư viện Mật mã Cốt lõi**
-- [x] **Phase 2: Phát triển Peer Node — Định danh, Bắt tay & Khóa phiên**
-- [x] **Phase 3: Xây dựng MITM Proxy & Công cụ Tấn công Gói tin**
-- [x] **Phase 4: Phát triển Giao diện Trực quan 3 Cột (Frontend Dashboard)**
+Hệ thống có đầy đủ kịch bản kiểm thử tự động cho từng mốc:
+
+```bash
+# Kiểm thử Mốc 1: Registry, Đăng ký, Từ chối trùng tên, Heartbeat & Timeout
+npx tsx tests/test-m1-registry.ts
+
+# Kiểm thử Mốc 2: Chat 1-1 qua TCP, ACK, Deduplication & Hàng đợi tin offline
+npx tsx tests/test-m2-chat.ts
+
+# Kiểm thử Mốc 3: Truyền file chunk 64KB, ghép nối và kiểm tra tính toàn vẹn Checksum
+npx tsx tests/test-m3-file.ts
+
+# Kiểm thử Mốc 4: Cầu nối WebSocket giữa React UI và Peer Backend
+npx tsx tests/test-m4-ui-bridge.ts
+
+# Kiểm thử Mốc 5: Kịch bản toàn diện (1 Registry + 3 Peer đồng thời, ngắt kết nối, gửi bù)
+npx tsx tests/test-m5-full-scenario.ts
+```
+
+---
+
+## 📂 TÀI LIỆU DÀNH CHO THÀNH VIÊN LÀM BẢO MẬT (GIAI ĐOẠN 2)
+Xem chi tiết tại: [Tài liệu Bàn giao Bảo mật (SECURITY_HANDOVER.md)](docs/SECURITY_HANDOVER.md)
 
