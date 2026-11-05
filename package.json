@@ -11,6 +11,7 @@
     "test:m3": "tsx tests/test-m3-file.ts",
     "test:m4": "tsx tests/test-m4-ui-bridge.ts",
     "test:m5": "tsx tests/test-m5-full-scenario.ts",
+    "test:mitm": "tsx tests/test-mitm-tamper.ts",
     "test": "tsx tests/test-m5-full-scenario.ts"
   },
   "dependencies": {

@@ -79,7 +79,8 @@ export function usePeerSocket(wsPort: number) {
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const wsUrl = `ws://127.0.0.1:${wsPort}`;
+    const wsHost = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "127.0.0.1";
+    const wsUrl = `ws://${wsHost}:${wsPort}`;
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
 
