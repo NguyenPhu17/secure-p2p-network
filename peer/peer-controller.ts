@@ -26,6 +26,7 @@ import { Logger } from "../common/logger.js";
 import { config } from "../common/config.js";
 import { FrameDecoder, encodeFrame } from "../common/framing.js";
 import { DhtNode } from "./dht/dht-node.js";
+import { getMailboxKey, MailboxMessage } from "./dht/dht-types.js";
 
 export interface PeerControllerOptions {
   displayName: string;
@@ -75,6 +76,7 @@ export class PeerController {
 
   // Callbacks thông báo tới UI Bridge
   private uiListeners: UIEventCallback[] = [];
+  private mailboxPollTimer: NodeJS.Timeout | null = null;
   private isClosing = false;
 
   constructor(opts: PeerControllerOptions) {
@@ -110,17 +112,27 @@ export class PeerController {
     // TODO(SECURITY): Giai đoạn 2 thay thế bằng SecureChannel
     this.channel = new PlainChannel(this.ip, this.tcpPort, this.logger);
 
-    // Khởi tạo File Transfer engine
-    this.fileSender = new FileSender(this.channel, this.displayName, this.logger);
-    this.fileReceiver = new FileReceiver(this.channel, this.displayName, this.logger, opts.downloadDir);
+    // Khởi tạo File Transfer engine tích hợp Mesh Relay Routing
+    this.fileSender = new FileSender(
+      (target, msg, preferredRelay) => this.sendMessageToPeer(target, msg, preferredRelay),
+      this.displayName,
+      this.logger
+    );
+    this.fileReceiver = new FileReceiver(
+      (target, msg, preferredRelay) => this.sendMessageToPeer(target, msg, preferredRelay),
+      this.displayName,
+      this.logger,
+      opts.downloadDir
+    );
 
-    // Khởi tạo Kademlia DHT Node (luôn khả dụng cho các tương tác DHT phân tán)
+    // Khởi tạo Kademlia DHT Node tích hợp Persistent Storage SQLite
     this.dht = new DhtNode({
       displayName: this.displayName,
       ip: this.ip,
       tcpPort: this.tcpPort,
       channel: this.channel,
-      logger: this.logger
+      logger: this.logger,
+      persistentStore: this.store
     });
 
     // Lắng nghe sự kiện khám phá peer từ DHT
@@ -130,6 +142,8 @@ export class PeerController {
         this.store.upsertPeer(peer);
         this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
         this.flushPendingMessages(peer.displayName);
+        // Tự động kéo tin nhắn offline từ Distributed Mailbox khi topology mạng mở rộng
+        this.checkDistributedMailbox().catch(() => {});
       }
     });
 
@@ -193,12 +207,17 @@ export class PeerController {
     if (this.discoveryMode === "dht") {
       this.logger.info("DHT", "🚀 Mạng hoạt động chế độ Phi tập trung hoàn toàn (Pure P2P DHT Kademlia). Không cần Registry SPOF!");
       await this.dht.bootstrap(this.bootstrapPeers);
+      await this.checkDistributedMailbox();
     } else if (this.discoveryMode === "registry") {
       await this.connectAndRegisterToRegistry();
     } else if (this.discoveryMode === "hybrid") {
       await this.dht.bootstrap(this.bootstrapPeers);
       await this.connectAndRegisterToRegistry();
+      await this.checkDistributedMailbox();
     }
+
+    // 5. Khởi động tiến trình kiểm tra định kỳ Distributed Mailbox trên DHT
+    this.startMailboxPollLoop();
   }
 
   /**
@@ -754,9 +773,13 @@ export class PeerController {
 
       case MessageType.FILE_META: {
         const metaPayload = msg.payload;
-        this.fileReceiver.handleFileMeta(msg, (prog) => {
-          this.emitUI("FILE_PROGRESS", prog);
-        });
+        this.fileReceiver.handleFileMeta(
+          msg,
+          (prog) => {
+            this.emitUI("FILE_PROGRESS", prog);
+          },
+          relayedBy
+        );
 
         // Lưu thông tin file vào database
         this.store.saveFileMeta({
@@ -794,7 +817,7 @@ export class PeerController {
       }
 
       case MessageType.FILE_CHUNK: {
-        const senderInfo = this.onlinePeers.get(msg.sender);
+        const senderInfo = this.resolvePeerContact(msg.sender) || undefined;
         await this.fileReceiver.handleFileChunk(
           msg,
           senderInfo,
@@ -805,7 +828,8 @@ export class PeerController {
             this.store.updateFileStatus(completed.file_id, "completed");
             this.logger.info("SYSTEM", `Tệp ${completed.fileName} đã được lưu thành công tại: ${completed.localPath}`);
             this.emitUI("FILE_COMPLETED", completed);
-          }
+          },
+          relayedBy
         );
         break;
       }
@@ -875,7 +899,8 @@ export class PeerController {
   }
 
   /**
-   * Thử gửi một tin nhắn đi (tự động thử Direct trước, fallback sang Mesh Relay)
+   * Thử gửi một tin nhắn đi (tự động thử Direct trước, fallback sang Mesh Relay,
+   * và nếu peer offline hoặc mọi đường truyền đều ngắt -> Tự động lưu vào Distributed Mailbox trên DHT).
    */
   private async attemptSendMessage(record: MessageRecord): Promise<boolean> {
     const isOnline = this.getOnlinePeers().some((p) => p.displayName === record.receiver);
@@ -883,8 +908,9 @@ export class PeerController {
     if (!isOnline && !this.simulatedBlockedPeers.has(record.receiver)) {
       this.logger.warn(
         "PROTOCOL",
-        `Peer '${record.receiver}' hiện đang offline. Tin nhắn ${record.message_id} lưu trong hàng đợi pending.`
+        `Peer '${record.receiver}' hiện đang offline. Đang gửi tin nhắn ${record.message_id} vào Distributed Mailbox trên DHT...`
       );
+      await this.depositToDistributedMailbox(record);
       return false;
     }
 
@@ -916,10 +942,136 @@ export class PeerController {
     } else {
       this.logger.warn(
         "ROUTING",
-        `Không thể chuyển phát tin nhắn ${record.message_id} tới '${record.receiver}' (cả Direct và Relay đều thất bại). Giữ trạng thái pending trong hàng đợi.`
+        `Không thể chuyển phát tin nhắn ${record.message_id} tới '${record.receiver}' (cả Direct và Relay đều thất bại). Đang lưu vào Distributed Mailbox trên DHT...`
+      );
+      // Đưa tin nhắn offline vào Distributed Mailbox trên DHT
+      await this.depositToDistributedMailbox(record);
+      return false;
+    }
+  }
+
+  /**
+   * Đưa tin nhắn vào Distributed Mailbox trên DHT (Replicated trên K node gần hash(receiver))
+   */
+  public async depositToDistributedMailbox(record: MessageRecord): Promise<boolean> {
+    const mailboxKey = getMailboxKey(record.receiver);
+    this.logger.info(
+      "DHT",
+      `📬 [DISTRIBUTED MAILBOX] Đang lưu tin nhắn offline (ID: ${record.message_id}) vào Distributed Mailbox của '${record.receiver}' trên DHT (Key: ${mailboxKey.substring(0, 10)}...)...`
+    );
+
+    const mailboxItem: MailboxMessage = {
+      message_id: record.message_id,
+      sender: record.sender,
+      receiver: record.receiver,
+      timestamp: record.timestamp,
+      body: record.body,
+      seq: record.seq,
+      nonce: record.nonce,
+      mac_or_signature: record.mac_or_signature
+    };
+
+    const success = await this.dht.depositMailbox(mailboxKey, mailboxItem);
+    if (success) {
+      this.logger.info(
+        "DHT",
+        `✅ [DISTRIBUTED MAILBOX] Đã lưu tin nhắn offline vào Distributed Mailbox trên DHT thành công (Replicated trên K node gần '${record.receiver}').`
+      );
+      this.emitUI("MAILBOX_DEPOSITED", {
+        message_id: record.message_id,
+        receiver: record.receiver,
+        mailboxKey
+      });
+      return true;
+    } else {
+      this.logger.warn(
+        "DHT",
+        `⚠️ [DISTRIBUTED MAILBOX] Không thể lưu vào Distributed Mailbox trên DHT. Giữ trạng thái pending tại SQLite cục bộ.`
       );
       return false;
     }
+  }
+
+  /**
+   * Truy vấn Distributed Mailbox trên DHT để kéo các tin nhắn gửi cho mình khi offline
+   */
+  public async checkDistributedMailbox(): Promise<number> {
+    const mailboxKey = getMailboxKey(this.displayName);
+    try {
+      const res = await this.dht.findValue(mailboxKey);
+      if (!res.found || !res.value || res.value.type !== "mailbox" || !Array.isArray(res.value.messages)) {
+        return 0;
+      }
+
+      const messages: MailboxMessage[] = res.value.messages;
+      if (messages.length === 0) return 0;
+
+      this.logger.info(
+        "DHT",
+        `📬 [DISTRIBUTED MAILBOX] Tìm thấy ${messages.length} tin nhắn offline trong Distributed Mailbox trên DHT! Bắt đầu đồng bộ về máy...`
+      );
+
+      let newCount = 0;
+      for (const msg of messages) {
+        const record: MessageRecord = {
+          message_id: msg.message_id,
+          conversation_id: `conv_${msg.sender}`,
+          sender: msg.sender,
+          receiver: this.displayName,
+          direction: "in",
+          seq: msg.seq,
+          timestamp: msg.timestamp,
+          body: msg.body,
+          status: "delivered",
+          type: "chat",
+          created_at: Date.now(),
+          nonce: msg.nonce || null,
+          mac_or_signature: msg.mac_or_signature || null,
+          route: ["DHT_MAILBOX", this.displayName],
+          relayed_by: "DHT_MAILBOX"
+        };
+
+        const { isDuplicate } = this.store.saveMessage(record);
+        if (!isDuplicate) {
+          newCount++;
+          this.logger.info(
+            "PROTOCOL",
+            `📥 [MAILBOX RECEIVED] Nhận tin nhắn offline từ '${msg.sender}': "${msg.body}" (ID: ${msg.message_id})`
+          );
+          this.emitUI("NEW_MESSAGE", record);
+        }
+
+        // Nếu người gửi đang online, gửi CHAT_ACK trực tiếp cho người gửi
+        const senderPeer = this.resolvePeerContact(msg.sender);
+        if (senderPeer) {
+          this.sendChatAck(msg.sender, msg.message_id).catch(() => {});
+        }
+      }
+
+      // Xóa các tin nhắn đã đọc khỏi Distributed Mailbox trên DHT
+      await this.dht.clearMailbox(mailboxKey, this.displayName);
+      this.logger.info(
+        "DHT",
+        `📬 [DISTRIBUTED MAILBOX] Đã dọn dẹp ${messages.length} tin nhắn trong Distributed Mailbox trên DHT.`
+      );
+
+      return newCount;
+    } catch (err: any) {
+      this.logger.warn("DHT", `Lỗi khi kiểm tra Distributed Mailbox: ${err.message}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Tiến trình định kỳ thăm dò Distributed Mailbox (Poll interval 5s)
+   */
+  private startMailboxPollLoop(): void {
+    if (this.mailboxPollTimer) clearInterval(this.mailboxPollTimer);
+    this.mailboxPollTimer = setInterval(() => {
+      if (!this.isClosing) {
+        this.checkDistributedMailbox().catch(() => {});
+      }
+    }, 5000);
   }
 
   /**
@@ -936,15 +1088,15 @@ export class PeerController {
   }
 
   /**
-   * Gửi file dạng chunk 64KB tới peer đối tác
+   * Gửi file dạng chunk 64KB tới peer đối tác (Tự động hỗ trợ Direct và Mesh Relay)
    */
   public async sendFile(receiver: string, filePath: string): Promise<{ file_id: string; success: boolean; error?: string }> {
-    const peer = this.onlinePeers.get(receiver);
-    if (!peer) {
+    const peer = this.resolvePeerContact(receiver);
+    if (!peer && !this.simulatedBlockedPeers.has(receiver)) {
       return { file_id: "", success: false, error: `Peer '${receiver}' hiện không online.` };
     }
 
-    const res = await this.fileSender.sendFile(peer, filePath, (prog) => {
+    const res = await this.fileSender.sendFile(receiver, filePath, (prog) => {
       this.emitUI("FILE_PROGRESS", prog);
     });
 
@@ -962,7 +1114,9 @@ export class PeerController {
         status: "delivered",
         type: "file",
         file_id: res.file_id,
-        created_at: Date.now()
+        created_at: Date.now(),
+        route: res.route || (res.relayedVia ? [this.displayName, res.relayedVia, receiver] : [this.displayName, receiver]),
+        relayed_by: res.relayedVia || null
       };
       this.store.saveMessage(fileMsgRecord);
       this.emitUI("NEW_MESSAGE", fileMsgRecord);
@@ -999,6 +1153,10 @@ export class PeerController {
   public async close(): Promise<void> {
     this.isClosing = true;
     this.stopHeartbeat();
+    if (this.mailboxPollTimer) {
+      clearInterval(this.mailboxPollTimer);
+      this.mailboxPollTimer = null;
+    }
     await this.dht.close();
     if (this.registrySocket) {
       this.registrySocket.removeAllListeners();

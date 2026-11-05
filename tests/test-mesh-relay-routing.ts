@@ -22,8 +22,10 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { PeerController } from "../peer/peer-controller.js";
 import { BaseMessage, MessageType, RelayForwardPayload } from "../common/protocol.js";
+import { calculateFileChecksum } from "../common/checksum.js";
 
 async function runMeshRelayRoutingTest() {
   console.log("================================================================================");
@@ -167,6 +169,65 @@ async function runMeshRelayRoutingTest() {
   console.log("✅ [BƯỚC 5 PASSED] Định tuyến Mesh 2 chiều hoàn hảo.\n");
 
   // ============================================================================
+  // BƯỚC 5B: TRUYỀN FILE QUA KÊNH MESH RELAY KHI ĐƯỜNG TRUYỀN TRỰC TIẾP BỊ CHẶN
+  // ============================================================================
+  console.log("[BƯỚC 5B] Kiểm chứng Truyền file qua kênh Mesh Relay (Alice -> Charlie -> Bob):");
+  console.log("   Tạo file test nhị phân đa chunk (150KB, ~3 chunks 64KB)...");
+  const testFileDir = "tests/temp_test_mesh_file";
+  if (!fs.existsSync(testFileDir)) fs.mkdirSync(testFileDir, { recursive: true });
+  const testFilePath = path.join(testFileDir, "mesh_relay_doc.bin");
+  const dummyData = Buffer.alloc(150 * 1024);
+  for (let i = 0; i < dummyData.length; i++) dummyData[i] = (i * 7) % 256;
+  fs.writeFileSync(testFilePath, dummyData);
+
+  const originalFileHash = await calculateFileChecksum(testFilePath);
+
+  // Xóa file download cũ của Bob nếu có
+  const bobDownloadDir = path.resolve("downloads", "Bob");
+  const bobReceivedFilePath = path.join(bobDownloadDir, "mesh_relay_doc.bin");
+  if (fs.existsSync(bobReceivedFilePath)) fs.unlinkSync(bobReceivedFilePath);
+
+  console.log(`   - Alice gửi file tới Bob khi direct TCP bị firewall chặn...`);
+  const fileSendRes = await alice.sendFile("Bob", testFilePath);
+
+  if (!fileSendRes.success) {
+    throw new Error(`[BƯỚC 5B FAILED] Alice gửi file qua Mesh Relay thất bại: ${fileSendRes.error}`);
+  }
+
+  console.log(`   - Gửi file hoàn tất! Trạng thái thành công 100%.`);
+
+  // Đợi Bob hoàn tất lưu file
+  await new Promise((r) => setTimeout(r, 1000));
+
+  if (!fs.existsSync(bobReceivedFilePath)) {
+    throw new Error(`[BƯỚC 5B FAILED] Bob chưa nhận được file tại ${bobReceivedFilePath}`);
+  }
+
+  const receivedFileHash = await calculateFileChecksum(bobReceivedFilePath);
+  if (receivedFileHash !== originalFileHash) {
+    throw new Error(`[BƯỚC 5B FAILED] Checksum hash file nhận qua Mesh Relay không khớp! (Gốc: ${originalFileHash}, Nhận: ${receivedFileHash})`);
+  }
+
+  // Kiểm tra lịch sử chat có lưu thông tin file và tuyến đường relay không
+  const bobFileMsgs = bob.getChatHistory("Alice").filter((m) => m.type === "file");
+  const aliceFileMsgs = alice.getChatHistory("Bob").filter((m) => m.type === "file");
+
+  if (bobFileMsgs.length === 0 || aliceFileMsgs.length === 0) {
+    throw new Error("[BƯỚC 5B FAILED] Không tìm thấy bản ghi tin nhắn file trong cơ sở dữ liệu!");
+  }
+
+  console.log(`   - Checksum file gốc : ${originalFileHash}`);
+  console.log(`   - Checksum file nhận: ${receivedFileHash} (Trùng khớp 100%)`);
+  console.log(`   - Lịch sử Bob       : [${bobFileMsgs[0].route?.join(" ➔ ")}] (Relayed by: ${bobFileMsgs[0].relayed_by})`);
+  console.log(`   - Lịch sử Alice     : [${aliceFileMsgs[0].route?.join(" ➔ ")}] (Relayed by: ${aliceFileMsgs[0].relayed_by})`);
+
+  if (bobFileMsgs[0].relayed_by !== "Charlie") {
+    throw new Error(`[BƯỚC 5B FAILED] File nhận ở Bob không ghi nhận relayed_by là Charlie (thực tế: ${bobFileMsgs[0].relayed_by})`);
+  }
+
+  console.log("✅ [BƯỚC 5B PASSED] Truyền file đa chunk qua Mesh Relay dưới điều kiện chặn Firewall thành công 100%!\n");
+
+  // ============================================================================
   // BƯỚC 6: KIỂM CHỨNG CHỐNG LẶP VÒNG ĐỊNH TUYẾN (ROUTING LOOP PREVENTION)
   // ============================================================================
   console.log("[BƯỚC 6] Kiểm chứng Chống lặp vòng định tuyến (Routing Loop Prevention):");
@@ -283,6 +344,10 @@ async function runMeshRelayRoutingTest() {
   await alice.close();
   await bob.close();
   await charlie.close();
+
+  // Dọn dẹp file test
+  if (fs.existsSync(testFileDir)) fs.rmSync(testFileDir, { recursive: true, force: true });
+  if (fs.existsSync(bobReceivedFilePath)) fs.unlinkSync(bobReceivedFilePath);
 
   console.log("================================================================================");
   console.log("🎉 TẤT CẢ KỊCH BẢN KIỂM THỬ ĐỊNH TUYẾN ĐA CHẶNG (MESH RELAY) ĐÃ THÀNH CÔNG 100%! 🎉");

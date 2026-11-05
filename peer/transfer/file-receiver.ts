@@ -1,5 +1,6 @@
 /**
  * FileReceiver - Quản lý việc tiếp nhận các chunk 64KB từ bên gửi, ghi trực tiếp xuống đĩa và kiểm tra tính toàn vẹn
+ * Hỗ trợ gửi phản hồi FILE_ACK qua cả kênh trực tiếp và kênh Mesh Relay chuyển tiếp.
  * Tối ưu RAM: Ghi trực tiếp xuống file tạm trên đĩa, không tích lũy dữ liệu chunk trong bộ nhớ.
  *
  * TODO(SECURITY): Xác thực chữ ký số và giải mã từng chunk / toàn file ở Giai đoạn 2.
@@ -18,7 +19,7 @@ import {
 } from "../../common/protocol.js";
 import { calculateChecksum, calculateFileChecksum } from "../../common/checksum.js";
 import { Logger } from "../../common/logger.js";
-import { FileTransferProgress } from "./file-sender.js";
+import { FileTransferProgress, SendMessageFunction } from "./file-sender.js";
 
 interface IncomingTransfer {
   file_id: string;
@@ -31,18 +32,26 @@ interface IncomingTransfer {
   tempPath: string;
   fd: number;
   receivedChunks: Set<number>;
+  preferredRelay?: string;
 }
 
 export class FileReceiver {
   private activeTransfers: Map<string, IncomingTransfer> = new Map();
   private downloadDir: string;
+  private channel?: IChannel;
+  private messageSender?: SendMessageFunction;
 
   constructor(
-    private channel: IChannel,
+    channelOrSender: IChannel | SendMessageFunction,
     private myName: string,
     private logger: Logger,
     customDownloadDir?: string
   ) {
+    if (typeof channelOrSender === "function") {
+      this.messageSender = channelOrSender;
+    } else {
+      this.channel = channelOrSender;
+    }
     this.downloadDir = customDownloadDir || path.resolve("downloads", this.myName);
     if (!fs.existsSync(this.downloadDir)) {
       fs.mkdirSync(this.downloadDir, { recursive: true });
@@ -54,7 +63,8 @@ export class FileReceiver {
    */
   public handleFileMeta(
     msg: BaseMessage<FileMetaPayload>,
-    onProgress?: (progress: FileTransferProgress) => void
+    onProgress?: (progress: FileTransferProgress) => void,
+    relayedBy?: string
   ): void {
     const payload = msg.payload;
     const tempPath = path.join(this.downloadDir, `${payload.file_id}.tmp`);
@@ -70,13 +80,14 @@ export class FileReceiver {
       expectedFileHash: payload.fileHash,
       tempPath,
       fd,
-      receivedChunks: new Set()
+      receivedChunks: new Set(),
+      preferredRelay: relayedBy
     };
 
     this.activeTransfers.set(payload.file_id, transfer);
     this.logger.info(
       "NETWORK",
-      `Bắt đầu nhận file '${payload.fileName}' (${payload.fileSize} bytes, ${payload.totalChunks} chunks) từ '${msg.sender}'`
+      `Bắt đầu nhận file '${payload.fileName}' (${payload.fileSize} bytes, ${payload.totalChunks} chunks) từ '${msg.sender}'${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}`
     );
 
     if (onProgress) {
@@ -98,9 +109,10 @@ export class FileReceiver {
    */
   public async handleFileChunk(
     msg: BaseMessage<FileChunkPayload>,
-    senderPeerInfo: PeerInfo | undefined,
+    senderPeerInfoOrRelay?: PeerInfo | string,
     onProgress?: (progress: FileTransferProgress) => void,
-    onComplete?: (result: { file_id: string; fileName: string; localPath: string; size: number; hash: string }) => void
+    onComplete?: (result: { file_id: string; fileName: string; localPath: string; size: number; hash: string }) => void,
+    relayedBy?: string
   ): Promise<void> {
     const payload = msg.payload;
     const transfer = this.activeTransfers.get(payload.file_id);
@@ -109,6 +121,12 @@ export class FileReceiver {
       this.logger.warn("PROTOCOL", `Nhận chunk cho file không tồn tại hoặc đã hủy: ${payload.file_id}`);
       return;
     }
+
+    const preferredRelay =
+      relayedBy ||
+      (typeof senderPeerInfoOrRelay === "string" ? senderPeerInfoOrRelay : undefined) ||
+      transfer.preferredRelay;
+    const senderPeerInfo = typeof senderPeerInfoOrRelay === "object" ? senderPeerInfoOrRelay : undefined;
 
     const chunkBuffer = Buffer.from(payload.data, "base64");
 
@@ -120,7 +138,7 @@ export class FileReceiver {
         "PROTOCOL",
         `Sai lệch checksum chunk ${payload.chunkIndex} của file ${payload.file_id}: ${calculatedHash} !== ${payload.chunkHash}`
       );
-      await this.sendFileAck(senderPeerInfo, payload.file_id, payload.chunkIndex, "RETRY");
+      await this.sendFileAck(msg.sender, payload.file_id, payload.chunkIndex, "RETRY", senderPeerInfo, preferredRelay);
       return;
     }
 
@@ -129,8 +147,8 @@ export class FileReceiver {
     fs.writeSync(transfer.fd, chunkBuffer, 0, chunkBuffer.length, offset);
     transfer.receivedChunks.add(payload.chunkIndex);
 
-    // 3. Gửi FILE_ACK xác nhận nhận thành công chunk
-    await this.sendFileAck(senderPeerInfo, payload.file_id, payload.chunkIndex, "OK");
+    // 3. Gửi FILE_ACK xác nhận nhận thành công chunk (Hỗ trợ định tuyến qua Mesh Relay)
+    await this.sendFileAck(msg.sender, payload.file_id, payload.chunkIndex, "OK", senderPeerInfo, preferredRelay);
 
     const transferredChunks = transfer.receivedChunks.size;
     const percent = Math.floor((transferredChunks / transfer.totalChunks) * 100);
@@ -190,18 +208,18 @@ export class FileReceiver {
   }
 
   private async sendFileAck(
-    senderPeerInfo: PeerInfo | undefined,
+    targetPeerName: string,
     file_id: string,
     chunkIndex: number,
-    status: "OK" | "RETRY"
+    status: "OK" | "RETRY",
+    senderPeerInfo?: PeerInfo,
+    preferredRelay?: string
   ): Promise<void> {
-    if (!senderPeerInfo) return;
-
     const ackMsg: BaseMessage<FileAckPayload> = {
       type: MessageType.FILE_ACK,
       message_id: crypto.randomUUID(),
       sender: this.myName,
-      receiver: senderPeerInfo.displayName,
+      receiver: targetPeerName,
       seq: chunkIndex,
       timestamp: Date.now(),
       payload: {
@@ -213,7 +231,11 @@ export class FileReceiver {
       mac_or_signature: null
     };
 
-    await this.channel.sendMessage(senderPeerInfo.ip, senderPeerInfo.tcpPort, ackMsg);
+    if (this.messageSender) {
+      await this.messageSender(targetPeerName, ackMsg, preferredRelay);
+    } else if (this.channel && senderPeerInfo) {
+      await this.channel.sendMessage(senderPeerInfo.ip, senderPeerInfo.tcpPort, ackMsg);
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 /**
  * FileSender - Quản lý việc chia nhỏ và gửi file qua kênh P2P theo từng chunk 64KB
+ * Hỗ trợ cả kênh truyền trực tiếp (Direct TCP Socket) và kênh Mesh Relay chuyển tiếp đa chặng.
  * Tối ưu RAM: Dùng buffer 64KB duy nhất, đọc từng đoạn từ đĩa và giải phóng ngay.
  *
  * TODO(SECURITY): Thay thế hàm băm đơn giản bằng SHA-256 và ký số từng chunk / toàn file.
@@ -25,6 +26,12 @@ export interface FileTransferProgress {
   speedBps?: number;
 }
 
+export type SendMessageFunction = (
+  targetPeerName: string,
+  message: BaseMessage,
+  preferredRelay?: string
+) => Promise<{ success: boolean; relayedVia?: string; route?: string[] }>;
+
 export class FileSender {
   private activeTransfers: Map<string, {
     file_id: string;
@@ -34,11 +41,20 @@ export class FileSender {
     pendingAcks: Map<number, (success: boolean) => void>;
   }> = new Map();
 
+  private channel?: IChannel;
+  private messageSender?: SendMessageFunction;
+
   constructor(
-    private channel: IChannel,
+    channelOrSender: IChannel | SendMessageFunction,
     private myName: string,
     private logger: Logger
-  ) {}
+  ) {
+    if (typeof channelOrSender === "function") {
+      this.messageSender = channelOrSender;
+    } else {
+      this.channel = channelOrSender;
+    }
+  }
 
   /**
    * Xử lý gói tin FILE_ACK nhận được từ bên nhận
@@ -55,17 +71,18 @@ export class FileSender {
   }
 
   /**
-   * Bắt đầu gửi file tới Peer đích
+   * Bắt đầu gửi file tới Peer đích (Hỗ trợ cả Direct Socket và Mesh Relay)
    */
   public async sendFile(
-    targetPeer: PeerInfo,
+    targetPeer: PeerInfo | string,
     filePath: string,
     onProgress?: (progress: FileTransferProgress) => void
-  ): Promise<{ file_id: string; success: boolean; error?: string }> {
+  ): Promise<{ file_id: string; success: boolean; error?: string; relayedVia?: string; route?: string[] }> {
     if (!fs.existsSync(filePath)) {
       throw new Error(`File không tồn tại: ${filePath}`);
     }
 
+    const targetPeerName = typeof targetPeer === "string" ? targetPeer : targetPeer.displayName;
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const fileName = path.basename(filePath);
@@ -75,7 +92,7 @@ export class FileSender {
 
     this.logger.info(
       "NETWORK",
-      `Chuẩn bị gửi file '${fileName}' (${fileSize} bytes, ${totalChunks} chunks) tới '${targetPeer.displayName}'`
+      `Chuẩn bị gửi file '${fileName}' (${fileSize} bytes, ${totalChunks} chunks) tới '${targetPeerName}'`
     );
 
     // 1. Tính hash toàn file theo stream (Tối ưu RAM)
@@ -87,7 +104,7 @@ export class FileSender {
       type: MessageType.FILE_META,
       message_id: crypto.randomUUID(),
       sender: this.myName,
-      receiver: targetPeer.displayName,
+      receiver: targetPeerName,
       seq: 0,
       timestamp: Date.now(),
       payload: {
@@ -102,7 +119,19 @@ export class FileSender {
       mac_or_signature: null
     };
 
-    const metaSent = await this.channel.sendMessage(targetPeer.ip, targetPeer.tcpPort, metaMsg);
+    let metaSent = false;
+    let relayedVia: string | undefined;
+    let route: string[] | undefined;
+
+    if (this.messageSender) {
+      const res = await this.messageSender(targetPeerName, metaMsg);
+      metaSent = res.success;
+      relayedVia = res.relayedVia;
+      route = res.route;
+    } else if (this.channel && typeof targetPeer !== "string") {
+      metaSent = await this.channel.sendMessage(targetPeer.ip, targetPeer.tcpPort, metaMsg);
+    }
+
     if (!metaSent) {
       return { file_id, success: false, error: "Không thể gửi FILE_META tới peer" };
     }
@@ -132,7 +161,7 @@ export class FileSender {
           type: MessageType.FILE_CHUNK,
           message_id: crypto.randomUUID(),
           sender: this.myName,
-          receiver: targetPeer.displayName,
+          receiver: targetPeerName,
           seq: chunkIndex + 1,
           timestamp: Date.now(),
           payload: {
@@ -163,7 +192,21 @@ export class FileSender {
             });
           });
 
-          await this.channel.sendMessage(targetPeer.ip, targetPeer.tcpPort, chunkMsg);
+          if (this.messageSender) {
+            const chunkRes = await this.messageSender(targetPeerName, chunkMsg, relayedVia);
+            if (!chunkRes.success) {
+              this.logger.warn("ROUTING", `Không thể gửi chunk ${chunkIndex + 1}/${totalChunks} tới '${targetPeerName}'`);
+            }
+            if (chunkRes.relayedVia) {
+              relayedVia = chunkRes.relayedVia;
+            }
+            if (chunkRes.route) {
+              route = chunkRes.route;
+            }
+          } else if (this.channel && typeof targetPeer !== "string") {
+            await this.channel.sendMessage(targetPeer.ip, targetPeer.tcpPort, chunkMsg);
+          }
+
           acked = await chunkPromise;
 
           if (!acked) {
@@ -194,7 +237,7 @@ export class FileSender {
       }
 
       this.logger.info("NETWORK", `Gửi file '${fileName}' (${file_id}) thành công 100%!`);
-      return { file_id, success: true };
+      return { file_id, success: true, relayedVia, route };
     } finally {
       fs.closeSync(fd);
       this.activeTransfers.delete(file_id);

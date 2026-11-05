@@ -20,7 +20,15 @@ import {
 } from "../../common/protocol.js";
 import { IChannel } from "../../common/channel.js";
 import { Logger } from "../../common/logger.js";
-import { DhtContact, generateNodeId, xorDistance } from "./dht-types.js";
+import {
+  DhtContact,
+  generateNodeId,
+  xorDistance,
+  StoredValue,
+  IDhtPersistentStore,
+  MailboxMessage,
+  getMailboxKey
+} from "./dht-types.js";
 import { RoutingTable } from "./routing-table.js";
 
 export interface DhtNodeOptions {
@@ -33,12 +41,8 @@ export interface DhtNodeOptions {
   alpha?: number; // Hệ số song song trong iterative lookup (mặc định 3)
   pingIntervalMs?: number; // Chu kỳ ping kiểm tra liveness (mặc định 3000ms)
   rpcTimeoutMs?: number;   // Timeout cho mỗi RPC request (mặc định 2000ms)
-}
-
-interface StoredValue {
-  value: any;
-  expiresAt: number;
-  publisher: string;
+  republishIntervalMs?: number; // Chu kỳ Kademlia republishing (mặc định 3600000ms = 1h)
+  persistentStore?: IDhtPersistentStore; // Lưu trữ bền vững SQLite
 }
 
 interface PendingRequest {
@@ -57,8 +61,10 @@ export class DhtNode {
   private alpha: number;
   private pingIntervalMs: number;
   private rpcTimeoutMs: number;
+  private republishIntervalMs: number;
+  private persistentStore?: IDhtPersistentStore;
 
-  // Lưu trữ cặp key-value phân tán trên node
+  // Lưu trữ cặp key-value phân tán trên node (L1 Cache)
   private storage: Map<string, StoredValue> = new Map();
 
   // Quản lý các yêu cầu RPC đang chờ phản hồi
@@ -69,6 +75,7 @@ export class DhtNode {
   private peerLeftListeners: Array<(peer: PeerInfo) => void> = [];
 
   private maintenanceTimer: NodeJS.Timeout | null = null;
+  private republishTimer: NodeJS.Timeout | null = null;
   private isClosing = false;
 
   constructor(opts: DhtNodeOptions) {
@@ -86,6 +93,8 @@ export class DhtNode {
     this.alpha = opts.alpha || 3;
     this.pingIntervalMs = opts.pingIntervalMs || 3000;
     this.rpcTimeoutMs = opts.rpcTimeoutMs || 2000;
+    this.republishIntervalMs = opts.republishIntervalMs || 3600000; // Mặc định 1h theo chuẩn Kademlia
+    this.persistentStore = opts.persistentStore;
   }
 
   public onPeerJoined(listener: (peer: PeerInfo) => void): void {
@@ -113,7 +122,49 @@ export class DhtNode {
   }
 
   /**
-   * Khởi động DHT Node và tiến trình bảo trì định kỳ
+   * Lưu trữ cặp key-value vào cả bộ nhớ RAM và Persistent SQLite Store
+   */
+  public saveToStorage(
+    key: string,
+    value: any,
+    ttlMs: number,
+    publisher: string,
+    isLocalPublished = false
+  ): void {
+    const expiresAt = Date.now() + ttlMs;
+    const entry: StoredValue = {
+      value,
+      expiresAt,
+      publisher,
+      isLocalPublished
+    };
+    this.storage.set(key, entry);
+
+    if (this.persistentStore) {
+      try {
+        this.persistentStore.saveDhtRecord(key, value, expiresAt, publisher, isLocalPublished);
+      } catch (err: any) {
+        this.logger.warn("DHT", `Lỗi khi lưu DHT record '${key}' vào SQLite: ${err.message}`);
+      }
+    }
+  }
+
+  /**
+   * Xóa bản ghi khỏi RAM và SQLite
+   */
+  public deleteFromStorage(key: string): void {
+    this.storage.delete(key);
+    if (this.persistentStore) {
+      try {
+        this.persistentStore.deleteDhtRecord(key);
+      } catch (err: any) {
+        this.logger.warn("DHT", `Lỗi khi xóa DHT record '${key}' khỏi SQLite: ${err.message}`);
+      }
+    }
+  }
+
+  /**
+   * Khởi động DHT Node, phục hồi dữ liệu từ SQLite và kích hoạt bảo trì + republishing
    */
   public async start(): Promise<void> {
     this.logger.info(
@@ -121,15 +172,36 @@ export class DhtNode {
       `Khởi động DHT Node '${this.localInfo.displayName}' (Node ID: ${this.localNodeId.substring(0, 8)}...)`
     );
 
-    // Lưu thông tin bản thân vào local storage
-    this.storage.set(this.localNodeId, {
-      value: this.localInfo,
-      expiresAt: Date.now() + 365 * 24 * 3600 * 1000,
-      publisher: this.localInfo.displayName
-    });
+    // 1. Phục hồi dữ liệu DHT từ Persistent Store SQLite (Chống mất mát khi Churn/Restart)
+    if (this.persistentStore) {
+      try {
+        const persisted = this.persistentStore.getAllUnexpiredDhtRecords(Date.now());
+        for (const [key, val] of persisted.entries()) {
+          this.storage.set(key, val);
+        }
+        this.logger.info(
+          "DHT",
+          `💾 [DHT PERSISTENCE] Đã phục hồi thành công ${persisted.size} bản ghi DHT từ cơ sở dữ liệu SQLite bền vững.`
+        );
+      } catch (err: any) {
+        this.logger.warn("DHT", `Lỗi khi nạp dữ liệu DHT từ SQLite: ${err.message}`);
+      }
+    }
 
-    // Bắt đầu chu trình bảo trì và kiểm tra liveness phi tập trung
+    // 2. Lưu thông tin bản thân vào storage (cả RAM và SQLite)
+    this.saveToStorage(
+      this.localNodeId,
+      this.localInfo,
+      365 * 24 * 3600 * 1000,
+      this.localInfo.displayName,
+      true
+    );
+
+    // 3. Bắt đầu chu trình bảo trì và kiểm tra liveness phi tập trung
     this.startMaintenanceLoop();
+
+    // 4. Bắt đầu chu trình Kademlia Periodic Republishing
+    this.startRepublishLoop();
   }
 
   /**
@@ -260,13 +332,56 @@ export class DhtNode {
 
       case MessageType.DHT_STORE: {
         const payload = msg.payload as DhtStorePayload;
-        this.storage.set(payload.key, {
-          value: payload.value,
-          expiresAt: Date.now() + (payload.ttlMs || 3600000),
-          publisher: payload.publisher
-        });
+        let valueToStore = payload.value;
 
-        this.logger.info("DHT", `Đã lưu trữ DHT key '${payload.key.substring(0, 10)}...' từ ${payload.publisher}`);
+        // Xử lý CRDT hợp nhất tin nhắn nếu là Distributed Mailbox
+        if (valueToStore && valueToStore.type === "mailbox" && Array.isArray(valueToStore.messages)) {
+          let existing = this.storage.get(payload.key);
+          if (!existing && this.persistentStore) {
+            existing = this.persistentStore.getDhtRecord(payload.key) || undefined;
+          }
+
+          if (
+            existing &&
+            existing.value &&
+            existing.value.type === "mailbox" &&
+            Array.isArray(existing.value.messages)
+          ) {
+            if (valueToStore.messages.length === 0) {
+              // Yêu cầu dọn sạch Mailbox
+              valueToStore = {
+                type: "mailbox",
+                recipient: valueToStore.recipient || existing.value.recipient,
+                messages: []
+              };
+            } else {
+              // Hợp nhất các tin nhắn offline theo message_id (Set-Union)
+              const mergedMap = new Map<string, any>();
+              for (const m of existing.value.messages) {
+                mergedMap.set(m.message_id, m);
+              }
+              for (const m of valueToStore.messages) {
+                mergedMap.set(m.message_id, m);
+              }
+              valueToStore = {
+                type: "mailbox",
+                recipient: valueToStore.recipient || existing.value.recipient,
+                messages: Array.from(mergedMap.values())
+              };
+            }
+          }
+        }
+
+        // Lưu bền vững vào cả RAM và SQLite
+        this.saveToStorage(
+          payload.key,
+          valueToStore,
+          payload.ttlMs || 3600000,
+          payload.publisher,
+          false
+        );
+
+        this.logger.info("DHT", `Đã lưu trữ DHT key '${payload.key.substring(0, 10)}...' từ ${payload.publisher} (Đã bền vững vào SQLite)`);
 
         const ackMsg: BaseMessage<DhtStoreAckPayload> = {
           type: MessageType.DHT_STORE_ACK,
@@ -287,6 +402,8 @@ export class DhtNode {
         const contact = this.routingTable.get(payload.publisherNodeId);
         if (contact) {
           await this.channel.sendMessage(contact.ip, contact.tcpPort, ackMsg);
+        } else if (from) {
+          await this.channel.sendMessage(from.ip, from.port, ackMsg);
         }
         return true;
       }
@@ -301,7 +418,14 @@ export class DhtNode {
         const payload = msg.payload as DhtFindValuePayload;
         this.addOrUpdateContact(payload.senderInfo);
 
-        const entry = this.storage.get(payload.key);
+        let entry = this.storage.get(payload.key);
+        if (!entry && this.persistentStore) {
+          entry = this.persistentStore.getDhtRecord(payload.key) || undefined;
+          if (entry && entry.expiresAt > Date.now()) {
+            this.storage.set(payload.key, entry);
+          }
+        }
+
         let respPayload: DhtFindValueRespPayload;
 
         if (entry && entry.expiresAt > Date.now()) {
@@ -549,14 +673,11 @@ export class DhtNode {
 
   /**
    * Lưu trữ cặp key-value lên K node gần key nhất trong mạng DHT
+   * Đồng thời lưu bền vững vào SQLite với cờ isLocalPublished = true
    */
   public async store(key: string, value: any, ttlMs: number = 3600000): Promise<number> {
-    // 1. Lưu bản sao trên chính mình
-    this.storage.set(key, {
-      value,
-      expiresAt: Date.now() + ttlMs,
-      publisher: this.localInfo.displayName
-    });
+    // 1. Lưu bản sao trên chính mình (RAM + SQLite, đánh dấu sở hữu bản quyền dữ liệu)
+    this.saveToStorage(key, value, ttlMs, this.localInfo.displayName, true);
 
     // 2. Tìm K nodes gần key nhất
     const closest = await this.iterativeFindNode(key);
@@ -600,15 +721,25 @@ export class DhtNode {
 
   /**
    * Tìm kiếm giá trị theo key trên mạng DHT (Iterative Value Lookup)
+   * Kiểm tra RAM -> SQLite -> Iterative Network Lookup
    */
   public async findValue(key: string): Promise<{ found: boolean; value?: any }> {
-    // Kiểm tra local cache
-    const local = this.storage.get(key);
+    // 1. Kiểm tra local cache (RAM)
+    let local = this.storage.get(key);
+
+    // 2. Nếu chưa có trên RAM, thử kiểm tra cơ sở dữ liệu SQLite bền vững
+    if (!local && this.persistentStore) {
+      local = this.persistentStore.getDhtRecord(key) || undefined;
+      if (local && local.expiresAt > Date.now()) {
+        this.storage.set(key, local);
+      }
+    }
+
     if (local && local.expiresAt > Date.now()) {
       return { found: true, value: local.value };
     }
 
-    // Tìm kiếm trên mạng
+    // 3. Tìm kiếm trên mạng qua Iterative Value Lookup
     const closest = this.routingTable.getClosestNodes(key, this.routingTable.kSize);
     for (const contact of closest) {
       const msgId = crypto.randomUUID();
@@ -634,18 +765,155 @@ export class DhtNode {
       try {
         const resp = await this.waitForResponse<DhtFindValueRespPayload>(msgId, this.rpcTimeoutMs);
         if (resp && resp.found) {
-          // Lưu cache lại trên node
-          this.storage.set(key, {
-            value: resp.value,
-            expiresAt: Date.now() + 300000,
-            publisher: contact.displayName
-          });
+          // Lưu cache lại trên node (cả RAM và SQLite)
+          this.saveToStorage(key, resp.value, 300000, contact.displayName, false);
           return { found: true, value: resp.value };
         }
       } catch {}
     }
 
     return { found: false };
+  }
+
+  /**
+   * ============================================================================
+   * DISTRIBUTED MAILBOX: HÀNG ĐỢI TIN NHẮN OFFLINE PHÂN TÁN QUA DHT
+   * ============================================================================
+   */
+
+  /**
+   * Lưu một tin nhắn offline vào Distributed Mailbox của người nhận trên DHT.
+   * Dữ liệu được replicate trên K node gần hash(receiver) nhất.
+   */
+  public async depositMailbox(
+    mailboxKey: string,
+    message: MailboxMessage,
+    ttlMs: number = 24 * 3600 * 1000
+  ): Promise<boolean> {
+    // 1. Lấy mailbox hiện tại nếu có
+    let messages: MailboxMessage[] = [];
+    let local = this.storage.get(mailboxKey);
+    if (!local && this.persistentStore) {
+      local = this.persistentStore.getDhtRecord(mailboxKey) || undefined;
+    }
+
+    if (local && local.value && local.value.type === "mailbox" && Array.isArray(local.value.messages)) {
+      messages = [...local.value.messages];
+    } else {
+      const remote = await this.findValue(mailboxKey);
+      if (remote.found && remote.value && remote.value.type === "mailbox" && Array.isArray(remote.value.messages)) {
+        messages = [...remote.value.messages];
+      }
+    }
+
+    // Chống trùng lặp theo message_id
+    if (!messages.some((m) => m.message_id === message.message_id)) {
+      messages.push(message);
+    }
+
+    const mailboxValue = {
+      type: "mailbox",
+      recipient: message.receiver,
+      messages
+    };
+
+    // 2. Replicate phân tán tới K node gần mailboxKey
+    const storedCount = await this.store(mailboxKey, mailboxValue, ttlMs);
+    return storedCount > 0;
+  }
+
+  /**
+   * Dọn sạch các tin nhắn đã đọc trong Distributed Mailbox trên DHT
+   */
+  public async clearMailbox(mailboxKey: string, recipient: string): Promise<boolean> {
+    const emptyMailbox = {
+      type: "mailbox",
+      recipient,
+      messages: []
+    };
+    const storedCount = await this.store(mailboxKey, emptyMailbox, 3600000);
+    return storedCount > 0;
+  }
+
+  /**
+   * ============================================================================
+   * KADEMLIA PERIODIC REPUBLISHING: TỰ ĐỘNG PHÁT TÁN LẠI DỮ LIỆU ĐỊNH KỲ
+   * ============================================================================
+   */
+
+  private startRepublishLoop(): void {
+    if (this.republishTimer) clearInterval(this.republishTimer);
+    this.republishTimer = setInterval(async () => {
+      if (this.isClosing) return;
+      await this.runRepublish();
+    }, this.republishIntervalMs);
+  }
+
+  /**
+   * Kademlia Periodic Republishing:
+   * Quét toàn bộ dữ liệu do chính node này công bố (isLocalPublished)
+   * và phát tán lại DHT_STORE tới K node lân cận gần key nhất.
+   */
+  public async runRepublish(): Promise<number> {
+    const now = Date.now();
+    let count = 0;
+
+    const publishedRecords: Array<{ key: string; value: any; remainingTtl: number }> = [];
+
+    for (const [key, entry] of this.storage.entries()) {
+      if (entry.isLocalPublished && entry.expiresAt > now) {
+        publishedRecords.push({
+          key,
+          value: entry.value,
+          remainingTtl: Math.max(60000, entry.expiresAt - now)
+        });
+      }
+    }
+
+    if (publishedRecords.length === 0) return 0;
+
+    this.logger.info(
+      "DHT",
+      `🔄 [KADEMLIA REPUBLISH] Bắt đầu phát tán định kỳ ${publishedRecords.length} bản ghi sở hữu tới K node lân cận...`
+    );
+
+    for (const rec of publishedRecords) {
+      if (this.isClosing) break;
+      try {
+        const closest = await this.iterativeFindNode(rec.key);
+        for (const peer of closest) {
+          const msgId = crypto.randomUUID();
+          const storeMsg: BaseMessage<DhtStorePayload> = {
+            type: MessageType.DHT_STORE,
+            message_id: msgId,
+            sender: this.localInfo.displayName,
+            receiver: peer.displayName,
+            seq: 0,
+            timestamp: Date.now(),
+            payload: {
+              key: rec.key,
+              value: rec.value,
+              ttlMs: rec.remainingTtl,
+              publisher: this.localInfo.displayName,
+              publisherNodeId: this.localNodeId
+            },
+            nonce: null,
+            mac_or_signature: null
+          };
+
+          await this.channel.sendMessage(peer.ip, peer.tcpPort, storeMsg);
+        }
+        count++;
+        this.logger.info(
+          "DHT",
+          `✅ [REPUBLISH SUCCESS] Đã phát tán lại key '${rec.key.substring(0, 10)}...' tới ${closest.length} node lân cận.`
+        );
+      } catch (err: any) {
+        this.logger.warn("DHT", `Lỗi khi republish key '${rec.key}': ${err.message}`);
+      }
+    }
+
+    return count;
   }
 
   /**
@@ -698,12 +966,15 @@ export class DhtNode {
       }
     }
 
-    // Dọn dẹp storage các bản ghi hết hạn
+    // Dọn dẹp storage các bản ghi hết hạn (RAM + SQLite)
     const now = Date.now();
     for (const [key, entry] of this.storage.entries()) {
       if (entry.expiresAt <= now && key !== this.localNodeId) {
-        this.storage.delete(key);
+        this.deleteFromStorage(key);
       }
+    }
+    if (this.persistentStore) {
+      this.persistentStore.cleanupExpiredDhtRecords(now);
     }
   }
 
@@ -745,6 +1016,10 @@ export class DhtNode {
     if (this.maintenanceTimer) {
       clearInterval(this.maintenanceTimer);
       this.maintenanceTimer = null;
+    }
+    if (this.republishTimer) {
+      clearInterval(this.republishTimer);
+      this.republishTimer = null;
     }
 
     // Hủy toàn bộ pending RPCs

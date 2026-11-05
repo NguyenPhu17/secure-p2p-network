@@ -9,6 +9,7 @@
     "test:dht:unit": "tsx tests/test-dht-unit.ts",
     "test:dht": "tsx tests/test-pure-p2p-dht.ts",
     "test:mesh": "tsx tests/test-mesh-relay-routing.ts",
+    "test:persistence": "tsx tests/test-dht-persistence-mailbox.ts",
     "test": "tsx tests/test-mesh-relay-routing.ts"
   },
   "dependencies": {

@@ -39,6 +39,9 @@ export function initDatabase(dbPath: string): DatabaseSync {
   if (currentVersion < 2) {
     runMigrationV2(db);
   }
+  if (currentVersion < 3) {
+    runMigrationV3(db);
+  }
 
   return db;
 }
@@ -118,6 +121,22 @@ function runMigrationV2(db: DatabaseSync): void {
     // Đã tồn tại cột
   }
   db.exec(`INSERT INTO schema_version (version, applied_at) VALUES (2, ${Date.now()});`);
+}
+
+function runMigrationV3(db: DatabaseSync): void {
+  db.exec(`
+    -- Bảng lưu trữ cặp Key-Value của DHT Kademlia bền vững (Persistence)
+    CREATE TABLE IF NOT EXISTS dht_storage (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      publisher TEXT NOT NULL,
+      is_local_published INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dht_expires ON dht_storage(expires_at);
+    INSERT INTO schema_version (version, applied_at) VALUES (3, ${Date.now()});
+  `);
 }
 
 

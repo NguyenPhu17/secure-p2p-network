@@ -10,6 +10,47 @@ export interface DhtContact extends PeerInfo {
   failedPings: number;
 }
 
+export interface StoredValue {
+  value: any;
+  expiresAt: number;
+  publisher: string;
+  isLocalPublished?: boolean;
+}
+
+export interface MailboxMessage {
+  message_id: string;
+  sender: string;
+  receiver: string;
+  timestamp: number;
+  body: string;
+  seq: number;
+  nonce?: string | null;
+  mac_or_signature?: string | null;
+}
+
+export interface IDhtPersistentStore {
+  saveDhtRecord(
+    key: string,
+    value: any,
+    expiresAt: number,
+    publisher: string,
+    isLocalPublished?: boolean
+  ): void;
+  getDhtRecord(key: string): StoredValue | null;
+  deleteDhtRecord(key: string): void;
+  getAllUnexpiredDhtRecords(now?: number): Map<string, StoredValue>;
+  getLocalPublishedDhtRecords(now?: number): Array<{ key: string; value: any; expiresAt: number; publisher: string }>;
+  cleanupExpiredDhtRecords(now?: number): void;
+}
+
+/**
+ * Tạo DHT key 160-bit cho Distributed Mailbox của một peer
+ * Đảm bảo key nằm trong không gian metric 160-bit Kademlia (SHA-1)
+ */
+export function getMailboxKey(recipientName: string): string {
+  return generateNodeId(`mailbox:${recipientName.toLowerCase()}`);
+}
+
 /**
  * Tạo Node ID 160-bit chuẩn Kademlia từ chuỗi định danh (SHA-1)
  * Trả về 40 ký tự hex tương đương 160 bits.

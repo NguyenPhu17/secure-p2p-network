@@ -10,6 +10,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { initDatabase } from "./migrations.js";
 import { PeerInfo } from "../../common/protocol.js";
+import { IDhtPersistentStore, StoredValue } from "../dht/dht-types.js";
 
 export interface MessageRecord {
   message_id: string;
@@ -42,7 +43,7 @@ export interface FileRecord {
   created_at: number;
 }
 
-export class MessageStore {
+export class MessageStore implements IDhtPersistentStore {
   private db: DatabaseSync;
 
   constructor(dbPath: string) {
@@ -290,6 +291,115 @@ export class MessageStore {
     const stmt = this.db.prepare("SELECT * FROM files WHERE file_id = ?");
     const row = stmt.get(fileId) as any;
     return row ? (row as FileRecord) : null;
+  }
+
+  /**
+   * ============================================================================
+   * PHẦN BỀN VỮNG DỮ LIỆU DHT KADEMLIA (DHT PERSISTENT STORAGE)
+   * ============================================================================
+   */
+
+  /**
+   * Lưu trữ hoặc cập nhật một cặp Key-Value DHT vào SQLite
+   */
+  public saveDhtRecord(
+    key: string,
+    value: any,
+    expiresAt: number,
+    publisher: string,
+    isLocalPublished = false
+  ): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO dht_storage (key, value, expires_at, publisher, is_local_published, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        expires_at = excluded.expires_at,
+        publisher = excluded.publisher,
+        is_local_published = excluded.is_local_published,
+        updated_at = excluded.updated_at
+    `);
+    stmt.run(
+      key,
+      JSON.stringify(value),
+      expiresAt,
+      publisher,
+      isLocalPublished ? 1 : 0,
+      Date.now()
+    );
+  }
+
+  /**
+   * Truy vấn một bản ghi DHT theo Key
+   */
+  public getDhtRecord(key: string): StoredValue | null {
+    const stmt = this.db.prepare("SELECT * FROM dht_storage WHERE key = ?");
+    const row = stmt.get(key) as any;
+    if (!row) return null;
+    try {
+      return {
+        value: JSON.parse(row.value),
+        expiresAt: row.expires_at,
+        publisher: row.publisher,
+        isLocalPublished: row.is_local_published === 1
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Xóa một bản ghi DHT theo Key
+   */
+  public deleteDhtRecord(key: string): void {
+    const stmt = this.db.prepare("DELETE FROM dht_storage WHERE key = ?");
+    stmt.run(key);
+  }
+
+  /**
+   * Lấy tất cả các bản ghi DHT chưa hết hạn để nạp vào RAM khi khởi động node
+   */
+  public getAllUnexpiredDhtRecords(now: number = Date.now()): Map<string, StoredValue> {
+    const stmt = this.db.prepare("SELECT * FROM dht_storage WHERE expires_at > ?");
+    const rows = stmt.all(now) as any[];
+    const map = new Map<string, StoredValue>();
+    for (const r of rows) {
+      try {
+        map.set(r.key, {
+          value: JSON.parse(r.value),
+          expiresAt: r.expires_at,
+          publisher: r.publisher,
+          isLocalPublished: r.is_local_published === 1
+        });
+      } catch {}
+    }
+    return map;
+  }
+
+  /**
+   * Lấy tất cả bản ghi do chính node này công bố (is_local_published = 1) để republish
+   */
+  public getLocalPublishedDhtRecords(
+    now: number = Date.now()
+  ): Array<{ key: string; value: any; expiresAt: number; publisher: string }> {
+    const stmt = this.db.prepare(
+      "SELECT * FROM dht_storage WHERE is_local_published = 1 AND expires_at > ?"
+    );
+    const rows = stmt.all(now) as any[];
+    return rows.map((r) => ({
+      key: r.key,
+      value: JSON.parse(r.value),
+      expiresAt: r.expires_at,
+      publisher: r.publisher
+    }));
+  }
+
+  /**
+   * Dọn dẹp các bản ghi DHT đã hết hạn
+   */
+  public cleanupExpiredDhtRecords(now: number = Date.now()): void {
+    const stmt = this.db.prepare("DELETE FROM dht_storage WHERE expires_at <= ?");
+    stmt.run(now);
   }
 
   public close(): void {
