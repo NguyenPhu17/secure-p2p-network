@@ -1,7 +1,7 @@
-# Hệ thống Chat & Chia sẻ File P2P Bảo mật với KDC
+# Thiết kế và Hiện thực Mạng Phân tán P2P Dựa trên Kademlia DHT và Định tuyến Mesh Relay Kết hợp Bảo mật KDC
 ## Đề tài môn học: Các hệ thống phân tán (Distributed Systems)
 
-Dự án triển khai theo kiến trúc mạng phân tán Peer-to-Peer (P2P) kết hợp mô hình Trung tâm Phân phối Khóa (Key Distribution Center - KDC).
+Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân tán Peer-to-Peer (P2P) kết hợp bảng băm phân tán Kademlia DHT (Zero SPOF), cơ chế định tuyến đa chặng Mesh Relay và mô hình Trung tâm Phân phối Khóa (Key Distribution Center - KDC). Ứng dụng thực nghiệm: Hệ thống chat thời gian thực và chia sẻ tập tin phân tán.
 
 ---
 
@@ -105,29 +105,4 @@ Mở trình duyệt:
 - Tab 1: `http://localhost:5173/?port=3001` (Giao diện của Alice)
 - Tab 2: `http://localhost:5173/?port=3002` (Giao diện của Bob)
 - Tab 3: `http://localhost:5173/?port=3003` (Giao diện của Charlie)
-
----
-
-## 🧪 CHẠY BỘ KIỂM THỬ TỰ ĐỘNG (AUTOMATED TEST SUITE)
-
-Hệ thống có đầy đủ kịch bản kiểm thử tự động cho mạng Pure P2P DHT và các mốc truyền thống:
-
-```bash
-# 1. Kiểm thử Định tuyến Đa chặng Mesh Relay (Tường lửa/NAT, Charlie chuyển tiếp, Chống lặp vòng, TTL, ACK 2 chiều)
-npm run test:mesh
-
-# 2. Kiểm thử Toàn diện Mạng Pure P2P DHT Kademlia (Zero SPOF, Seed crash, Liveness pings, File transfer)
-npm run test:dht
-
-# 3. Kiểm thử Đơn vị (Unit Test) Kademlia Metric 160-bit, XOR Distance, K-Buckets & LRU Eviction
-npm run test:dht:unit
-
-# 4. Kiểm thử Xung đột định danh (Name Collision) & Hàn gắn phân mảnh mạng (Network Partition Healing)
-npm run test:healing
-```
-
----
-
-## 📂 TÀI LIỆU DÀNH CHO THÀNH VIÊN LÀM BẢO MẬT (GIAI ĐOẠN 2)
-Xem chi tiết tại: [Tài liệu Bàn giao Bảo mật (SECURITY_HANDOVER.md)](docs/SECURITY_HANDOVER.md)
 

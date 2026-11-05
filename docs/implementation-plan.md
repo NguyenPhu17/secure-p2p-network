@@ -1,4 +1,5 @@
-# KẾ HOẠCH TRIỂN KHAI GIAI ĐOẠN 1: HỆ THỐNG CHAT & P2P FILE SHARING (DISTRIBUTED CORE + REACT UI)
+# KẾ HOẠCH TRIỂN KHAI: THIẾT KẾ VÀ HIỆN THỰC MẠNG PHÂN TÁN P2P DỰA TRÊN KADEMLIA DHT VÀ ĐỊNH TUYẾN MESH RELAY KẾT HỢP BẢO MẬT KDC
+### Ứng dụng thực nghiệm: Chat thời gian thực & Truyền tập tin P2P (Distributed Core + React UI)
 
 ---
 
@@ -46,52 +47,124 @@ Nhằm đảm bảo hệ thống có thể chạy đồng thời 3 hoặc nhiề
 
 ## 3. KIẾN TRÚC HỆ THỐNG & SƠ ĐỒ LUỒNG DỮ LIỆU
 
-### 3.1. Sơ đồ kiến trúc tổng thể
+### 3.1. Sơ đồ kiến trúc tổng thể (System Overview & Overlay Network)
 
-```
-                    +-------------------------------------+
-                    |       Registry Node (Mock KDC)      |
-                    |   TCP Server (Port 7000)            |
-                    |   - Peer Table in RAM               |
-                    |   - Heartbeat Monitor & Timeout     |
-                    |   - Security Stubs:                 |
-                    |     * requestSessionKey()           |
-                    |     * verifyIdentity()              |
-                    +-------------------------------------+
-                               ^                ^
-            1. Đăng ký &       |                | 1. Đăng ký &
-               Heartbeat (TCP) |                |    Heartbeat (TCP)
-                               v                v
-+-----------------------------------+     +-----------------------------------+
-|        Peer Node: Alice           |     |         Peer Node: Bob            |
-|                                   |     |                                   |
-| [React UI (Vite)]                 |     | [React UI (Vite)]                 |
-|   | (WebSocket: 3001)             |     |   | (WebSocket: 3002)             |
-|   v                               |     |   v                               |
-| [Peer Backend (Node.js)]          |     | [Peer Backend (Node.js)]          |
-|   - UIBridge (WebSocket Server)   |     |   - UIBridge (WebSocket Server)   |
-|   - PeerController & EventBus     |     |   - PeerController & EventBus     |
-|   - SQLite (data/Alice.db)        |     |   - SQLite (data/Bob.db)          |
-|   - FileTransfer (Chunk 64KB)     |     |   - FileTransfer (Chunk 64KB)     |
-|   - PlainChannel (TCP Client/Svr) |<===>|   - PlainChannel (TCP Client/Svr) |
-|     (Port 8001)                   | 2. P2P Direct TCP (Chat / File Chunk)   |
-+-----------------------------------+     +-----------------------------------+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontSize': '13px',
+    'fontFamily': 'Segoe UI, Arial, sans-serif'
+  },
+  'flowchart': {
+    'rankSpacing': 35,
+    'nodeSpacing': 30,
+    'htmlLabels': true,
+    'useMaxWidth': false
+  }
+}}%%
+flowchart TB
+    %% Class Styles - Ép min-width đồng nhất để các ô và 3 Peer bằng nhau tuyệt đối, không bị cắt chữ
+    classDef kdc fill:#fffbeb,stroke:#d97706,stroke-width:2px,color:#92400e,rx:6,ry:6
+    classDef peer fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#166534,rx:6,ry:6
+    classDef relay fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#991b1b,rx:6,ry:6,min-width:240px
+    classDef ui fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e40af,rx:6,ry:6,min-width:240px
+    classDef internal fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#334155,rx:6,ry:6,min-width:240px
+    classDef db fill:#faf5ff,stroke:#9333ea,stroke-width:1.5px,color:#6b21a8,rx:6,ry:6,min-width:240px
+    classDef netbus fill:#f0fdfa,stroke:#0d9488,stroke-width:2px,color:#115e59,rx:6,ry:6
+    classDef relaybus fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#991b1b,rx:6,ry:6
+
+    %% 1. Tầng Discovery tập trung (Nằm trên đỉnh)
+    subgraph KDC_LAYER["TẦNG REGISTRY / MOCK KDC (CENTRALIZED DISCOVERY & AUTH)"]
+        REG["<b>Registry Node / Mock KDC (TCP: 7000)</b><br/>Peer Discovery • Heartbeat (5s/15s) • Session Key KDC"]:::kdc
+    end
+
+    %% 2. Mạng P2P Overlay (3 Peer dàn hàng ngang)
+    subgraph P2P_OVERLAY["MẠNG PHÂN TÁN P2P OVERLAY"]
+        direction LR
+
+        %% Peer Node: Alice (Cột Trái)
+        subgraph PEER_ALICE["Peer Node: Alice (TCP: 8001 | WS: 3001)"]
+            direction TB
+            UI_A["<b>React Web UI (Port 5173)</b><br/>Client Dashboard"]:::ui
+            WS_A["<b>UIBridge (WS: 3001)</b><br/>Realtime Event Stream"]:::internal
+            CTRL_A["<b>PeerController & EventBus</b><br/>State & Offline Queue"]:::internal
+            SVC_A["<b>Core Services & Storage</b><br/>• Kademlia DHT (160 Buckets)<br/>• FileTransfer (Zero-RAM 64KB)<br/>• SQLite Store (WAL ≤ 2MB)"]:::db
+            NET_A["<b>TCP Transport Engine</b><br/>4B Length-Prefixed Frame"]:::internal
+
+            UI_A <--> WS_A <--> CTRL_A <--> SVC_A <--> NET_A
+        end
+
+        %% Peer Node: Charlie (Cột Giữa)
+        subgraph PEER_CHARLIE["Peer Node: Charlie (TCP: 8003 | WS: 3003)"]
+            direction TB
+            UI_C["<b>React Web UI (Port 5173)</b><br/>Relay Monitor UI"]:::ui
+            WS_C["<b>UIBridge (WS: 3003)</b><br/>Realtime Event Stream"]:::internal
+            CTRL_C["<b>PeerController & Router</b><br/>Loop Check & Reverse Path"]:::relay
+            SVC_C["<b>Core Services & Routing</b><br/>• Kademlia DHT (160 Buckets)<br/>• Relay Forwarder & Routing<br/>• SQLite Store (WAL ≤ 2MB)"]:::db
+            NET_C["<b>TCP Transport Engine</b><br/>4B Length-Prefixed Frame"]:::internal
+
+            UI_C <--> WS_C <--> CTRL_C <--> SVC_C <--> NET_C
+        end
+
+        %% Peer Node: Bob (Cột Phải)
+        subgraph PEER_BOB["Peer Node: Bob (TCP: 8002 | WS: 3002)"]
+            direction TB
+            UI_B["<b>React Web UI (Port 5173)</b><br/>Client Dashboard"]:::ui
+            WS_B["<b>UIBridge (WS: 3002)</b><br/>Realtime Event Stream"]:::internal
+            CTRL_B["<b>PeerController & EventBus</b><br/>State & Offline Queue"]:::internal
+            SVC_B["<b>Core Services & Storage</b><br/>• Kademlia DHT (160 Buckets)<br/>• FileTransfer (Zero-RAM 64KB)<br/>• SQLite Store (WAL ≤ 2MB)"]:::db
+            NET_B["<b>TCP Transport Engine</b><br/>4B Length-Prefixed Frame"]:::internal
+
+            UI_B <--> WS_B <--> CTRL_B <--> SVC_B <--> NET_B
+        end
+    end
+
+    %% 3. Tầng Kênh truyền P2P (Nằm dưới đáy)
+    subgraph P2P_CHANNELS["KÊNH GIAO TIẾP MẠNG P2P (DATA & CONTROL CHANNELS)"]
+        direction LR
+        CH_DIRECT["<b>1. Kênh Chính (Direct P2P TCP)</b><br/>Alice ⟷ Bob: CHAT & FILE_CHUNK (64KB)"]:::netbus
+        CH_RELAY["<b>2. Kênh Dự phòng & Định tuyến (DHT & Mesh Relay)</b><br/>Alice ⟷ Charlie ⟷ Bob: RELAY_FORWARD & DHT RPC"]:::relaybus
+    end
+
+    %% Kết nối từ KDC xuống 3 Peer
+    REG -.->|"Heartbeat & Bootstrap"| PEER_ALICE
+    REG -.->|"Heartbeat & Bootstrap"| PEER_CHARLIE
+    REG -.->|"Heartbeat & Bootstrap"| PEER_BOB
+
+    %% Kết nối từ đáy 3 Peer xuống các kênh P2P
+    NET_A <-->|"Direct TCP"| CH_DIRECT
+    NET_B <-->|"Direct TCP"| CH_DIRECT
+
+    NET_A <-->|"DHT / Fallback"| CH_RELAY
+    NET_C <-->|"Relay Router"| CH_RELAY
+    NET_B <-->|"DHT / Fallback"| CH_RELAY
 ```
 
 ### 3.2. Luồng hoạt động chính
-1. **Đăng ký**: Peer mở TCP Server -> kết nối tới Registry TCP 7000 gửi `REGISTER { displayName, ip, tcpPort }`. Nếu trùng tên, Registry trả về lỗi `NAME_TAKEN`.
-2. **Heartbeat**: Mỗi 5s, Peer gửi `HEARTBEAT`. Nếu quá 15s không nhận được, Registry đánh dấu offline và broadcast `PEER_LEFT`.
-3. **Chat 1-1**:
+1. **Đăng ký (Chế độ Centralized Registry)**: Peer mở TCP Server -> kết nối tới Registry TCP 7000 gửi `REGISTER { displayName, ip, tcpPort }`. Nếu trùng tên, Registry trả về lỗi `NAME_TAKEN`.
+2. **Heartbeat (Chế độ Registry)**: Mỗi 5s, Peer gửi `HEARTBEAT`. Nếu quá 15s không nhận được, Registry đánh dấu offline và broadcast `PEER_LEFT`.
+3. **Khám phá phân tán qua Kademlia DHT (Pure P2P - Zero SPOF)**:
+   - Node tự sinh cặp khóa Ed25519, tính Node ID duy nhất: `SHA1(PublicKey)`.
+   - Kết nối vào mạng qua bootstrap node (`--bootstrap <ip>:<port>`), gửi `DHT_PING` và `DHT_FIND_NODE` để khám phá các nút lân cận và cập nhật 160 K-Buckets.
+   - Cơ chế **Network Partition Healing**: Khi mạng bị chia cắt rồi nối lại, các peer tự động tái kích hoạt kết nối tới các bootstrap node đã biết để hàn gắn bảng định tuyến mà không cần khởi động lại.
+4. **Chat 1-1 (Direct P2P)**:
    - Alice gửi tin cho Bob -> Lưu SQLite trạng thái `pending`.
-   - Kết nối TCP trực tiếp Alice -> Bob gửi message `CHAT`. Chuyển trạng thái `sent`.
+   - Mở kết nối TCP trực tiếp Alice -> Bob gửi message `CHAT`. Chuyển trạng thái `sent`.
    - Bob nhận -> Kiểm tra `message_id` chống trùng -> Lưu SQLite Bob -> Phản hồi `CHAT_ACK`.
-   - Alice nhận `CHAT_ACK` -> Cập nhật trạng thái `delivered` và báo lên UI.
-4. **Hàng đợi tin offline**: Nếu Bob đang offline khi Alice gửi tin, tin nhắn nằm chờ ở SQLite của Alice (`pending`). Khi Bob online trở lại (nhận event `PEER_JOINED` từ Registry), Alice tự động gửi lại các tin `pending`.
-5. **Truyền File Chunking**:
-   - File chia thành các chunk 64KB. Alice gửi `FILE_META`, Bob chuẩn bị file nhận tại `downloads/Bob/`.
-   - Alice đọc từng chunk từ đĩa -> tính checksum -> gửi `FILE_CHUNK`.
-   - Bob nhận chunk -> ghi trực tiếp xuống đĩa -> gửi `FILE_ACK`.
-   - Nhận xong toàn bộ -> Bob kiểm tra hash toàn file. Khớp -> hoàn thành; Không khớp -> báo lỗi.
+   - Alice nhận `CHAT_ACK` -> Cập nhật trạng thái `delivered` và báo lên UI qua WebSocket.
+5. **Định tuyến Đa chặng Mesh Relay (Multi-hop Overlay Fallback)**:
+   - Khi Alice không thể kết nối trực tiếp đến Bob (sau tường lửa, NAT, đứt kết nối vật lý trực tiếp), hệ thống tự kích hoạt chế độ Relay qua nút trung gian (Charlie).
+   - Alice gửi `RELAY_FORWARD` kèm lộ trình `route: ["Alice", "Charlie", "Bob"]` và `hopCount = 0`.
+   - Charlie nhận, kiểm tra tránh lặp vòng (loop detection) và TTL (`hopCount < maxHops`), lưu bộ đệm đảo chiều (Reverse Path Cache), rồi chuyển tiếp gói tin tới Bob.
+   - Bob nhận được tin nhắn và gửi phản hồi `RELAY_ACK` ngược lại cho Alice qua Charlie.
+6. **Hàng đợi tin offline**: Nếu Bob offline hoàn toàn, tin nhắn nằm chờ ở SQLite của Alice (`pending`). Khi Bob online trở lại (nhận event từ DHT hoặc Registry), Alice tự động gửi lại các tin `pending`.
+7. **Truyền File Phân đoạn (64KB Chunking & Stream Zero-RAM)**:
+   - Alice gửi `FILE_META` (tên, kích thước, số chunk, SHA256 tổng). Bob xác nhận và mở file nhận tại `downloads/Bob/`.
+   - Alice đọc từng khối `64 KB` bằng stream nhị phân (không đọc cả file vào RAM) -> tính checksum -> gửi `FILE_CHUNK`.
+   - Bob nhận từng chunk -> ghi ngay xuống đĩa -> gửi `FILE_ACK`.
+   - Hoàn tất: Bob kiểm tra checksum/hash toàn file. Khớp -> thành công; Sai -> báo lỗi.
+   - Cầu nối WebSocket chỉ truyền phần trăm tiến độ (`progress %`) lên React UI, không truyền dữ liệu nhị phân để UI không bị giật lag.
 
 ---
 
@@ -167,12 +240,4 @@ interface BaseMessage<T = any> {
   4. **Thanh trạng thái dưới đáy**: Hiển thị nhãn `Kênh truyền: Plaintext (Chưa mã hóa) - Chờ Giai đoạn 2 KDC`.
 
 ---
-
-## 7. KẾ HOẠCH THEO CÁC MỐC (MILESTONES)
-
-- **Mốc 1 (M1)**: Khung Protocol chung (`common/`) + Registry Node (`registry/`) với TCP server, đăng ký, heartbeat, timeout, security stubs.
-- **Mốc 2 (M2)**: Peer Backend (`peer/`) + `PlainChannel` + `MessageStore` SQLite + Chat 1-1 qua TCP + ACK + Hàng đợi offline + Chống trùng tin.
-- **Mốc 3 (M3)**: Truyền file phân đoạn 64KB (`transfer/`) + Checksum/Hash + Báo tiến độ + Ghép file đĩa an toàn RAM.
-- **Mốc 4 (M4)**: Giao diện React (`ui/`) + WebSocket Bridge (`ws/ui-bridge.ts`) kết nối hoàn chỉnh.
-- **Mốc 5 (M5)**: Kiểm thử kịch bản (1 Registry + 3 Peer) + Biên soạn tài liệu bàn giao bảo mật `docs/SECURITY_HANDOVER.md`.
 
