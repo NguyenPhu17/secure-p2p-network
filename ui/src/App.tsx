@@ -8,12 +8,10 @@ import { StatusBar } from "./components/StatusBar";
 import { AlertBanner } from "./components/AlertBanner";
 
 export const App: React.FC = () => {
-  // Lấy cổng từ URL query param (ví dụ ?port=3001) hoặc mặc định 3001
   const searchParams = new URLSearchParams(window.location.search);
   const paramPort = searchParams.get("port") ? parseInt(searchParams.get("port")!, 10) : null;
 
   const [wsPort, setWsPort] = useState<number | null>(paramPort);
-  // Mở sẵn Protocol Logs mặc định để tối ưu không gian 3 cột phục vụ demo/thuyết trình
   const [isLogsOpen, setIsLogsOpen] = useState(true);
 
   const {
@@ -35,7 +33,6 @@ export const App: React.FC = () => {
     deleteHistory
   } = usePeerSocket(wsPort || 3001);
 
-  // Khi chọn một peer, tự động tải lịch sử tin nhắn
   useEffect(() => {
     if (activePeer) {
       loadHistory(activePeer);
@@ -48,7 +45,6 @@ export const App: React.FC = () => {
         defaultPort={wsPort || 3001}
         onConnect={(port) => {
           setWsPort(port);
-          // Cập nhật URL không reload
           window.history.replaceState({}, "", `?port=${port}`);
         }}
       />
@@ -59,13 +55,13 @@ export const App: React.FC = () => {
   const isPeerOnline = !!activePeerInfo;
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-50 font-sans">
-      {/* Banner cảnh báo lỗi nếu có */}
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-white text-[#0F172A] font-sans antialiased">
+      {/* Alert Banner if any */}
       <AlertBanner message={errorAlert} onClose={clearAlert} />
 
-      {/* Vùng làm việc chính 3 cột */}
+      {/* Main 3-column workbench */}
       <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* Cột 1: Danh sách Peer */}
+        {/* Column 1: Peers List Sidebar */}
         <Sidebar
           me={me}
           tcpPort={tcpPort}
@@ -74,7 +70,7 @@ export const App: React.FC = () => {
           onSelectPeer={(name) => setActivePeer(name)}
         />
 
-        {/* Cột 2: Khung Chat & Gửi file */}
+        {/* Column 2: Chat & File Transfer Stream */}
         <ChatArea
           activePeer={activePeer}
           isPeerOnline={isPeerOnline}
@@ -87,7 +83,7 @@ export const App: React.FC = () => {
           onDeleteHistory={() => activePeer && deleteHistory(activePeer)}
         />
 
-        {/* Cột 3: Protocol Logs Panel (Luôn mở mặc định) */}
+        {/* Column 3: TCP Protocol Inspector Panel */}
         <ProtocolLogs
           logs={logs}
           isOpen={isLogsOpen}
@@ -100,7 +96,7 @@ export const App: React.FC = () => {
         />
       </div>
 
-      {/* Thanh trạng thái dưới đáy */}
+      {/* Bottom Status Bar */}
       <StatusBar
         channelStatus={channelStatus}
         tcpPort={tcpPort}

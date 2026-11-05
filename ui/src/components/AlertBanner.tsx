@@ -10,17 +10,17 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({ message, onClose }) =>
   if (!message) return null;
 
   return (
-    <div className="bg-amber-50 border-b border-amber-300 px-4 py-2 flex items-center justify-between text-xs font-mono text-amber-900 select-none z-30">
+    <div className="bg-[#FFFBEB] border-b border-[#FDE68A] px-4 py-2 flex items-center justify-between text-xs font-mono text-[#B45309] select-none z-30">
       <div className="flex items-center space-x-2">
-        <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-        <span className="font-semibold uppercase tracking-wider text-[11px] bg-amber-200/60 px-1 py-0.2 rounded">
+        <AlertCircle className="w-4 h-4 text-[#D97706] flex-shrink-0" />
+        <span className="font-semibold uppercase tracking-wider text-[10px] bg-[#FEF3C7] border border-[#FDE68A] px-1 py-0.2 rounded-[3px]">
           ALERT
         </span>
-        <span className="font-sans font-medium text-xs text-amber-950">{message}</span>
+        <span className="font-sans font-medium text-xs text-[#92400E]">{message}</span>
       </div>
       <button
         onClick={onClose}
-        className="text-amber-700 hover:text-amber-950 transition-colors p-1 rounded hover:bg-amber-100 flex-shrink-0"
+        className="text-[#B45309] hover:text-[#78350F] transition-colors p-1 rounded-[3px] hover:bg-[#FEF3C7] flex-shrink-0"
         title="Đóng thông báo"
       >
         <X className="w-3.5 h-3.5" />

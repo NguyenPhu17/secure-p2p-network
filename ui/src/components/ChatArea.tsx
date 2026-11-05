@@ -10,17 +10,13 @@ import {
   FileText,
   FileCheck,
   Terminal,
-  ShieldCheck,
-  ShieldAlert,
   UploadCloud,
   FolderOpen,
   X,
-  Server,
-  Layers,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Shield
 } from "lucide-react";
-import { getPeerColor } from "../utils/peerColors";
 
 interface ChatAreaProps {
   activePeer: string | null;
@@ -55,7 +51,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Tự động cuộn xuống tin nhắn mới nhất
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, fileTransfers]);
@@ -106,18 +101,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     !channelStatus.toLowerCase().includes("plaintext") &&
     !channelStatus.toLowerCase().includes("chưa mã hóa");
 
-  const peerColor = activePeer ? getPeerColor(activePeer) : null;
-
   if (!activePeer) {
     return (
-      <main className="flex-1 bg-tech-dots flex flex-col items-center justify-center p-8 text-center min-w-0">
-        <div className="w-12 h-12 rounded-lg bg-white border border-slate-300 shadow-2xs flex items-center justify-center text-slate-500 mb-3 font-mono">
-          <Terminal className="w-6 h-6 stroke-1 text-slate-500" />
+      <main className="flex-1 bg-white flex flex-col items-center justify-center p-8 text-center min-w-0">
+        <div className="w-12 h-12 rounded-[8px] bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-center text-[#64748B] mb-3">
+          <Terminal className="w-6 h-6 stroke-1" />
         </div>
-        <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider font-mono">
+        <h3 className="text-sm font-bold text-[#0F172A] uppercase tracking-wider font-mono">
           Session Idle • No Peer Selected
         </h3>
-        <p className="text-xs text-slate-500 mt-1 max-w-sm leading-relaxed font-sans">
+        <p className="text-sm text-[#64748B] mt-1.5 max-w-sm leading-relaxed font-sans">
           Chọn một nút Peer từ danh sách mạng bên trái để bắt đầu kiểm thử phiên truyền Socket TCP và quan sát gói tin.
         </p>
       </main>
@@ -131,90 +124,63 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     : "127.0.0.1:8002";
 
   return (
-    <main className="flex-1 bg-tech-dots flex flex-col h-full min-w-0">
-      {/* Header cuộc trò chuyện - Phong cách Postman / Workbench */}
-      <div className="h-13 min-h-[3.25rem] border-b border-slate-200 bg-white px-4 md:px-5 flex items-center justify-between flex-shrink-0 z-10">
-        <div className="flex items-center space-x-3 min-w-0">
+    <main className="flex-1 bg-white flex flex-col h-full min-w-0">
+      {/* 1. Top Header (height: 64px, full-width with 28px padding) */}
+      <div className="h-[64px] min-h-[64px] border-b border-[#E2E8F0] bg-white px-[28px] flex items-center justify-between flex-shrink-0 z-10">
+        <div className="flex items-center space-x-3.5 min-w-0">
           <div className="relative flex-shrink-0">
-            <div
-              className={`w-9 h-9 rounded-md flex items-center justify-center text-xs font-mono font-bold uppercase ${
-                peerColor ? `${peerColor.bg} ${peerColor.text}` : "bg-slate-800 text-white"
-              }`}
-            >
+            <div className="w-10 h-10 rounded-[8px] bg-[#E2E8F0] text-[#0F172A] font-mono font-bold text-[15px] flex items-center justify-center uppercase">
               {activePeer.substring(0, 2)}
             </div>
             <span
-              className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-white ${
-                isPeerOnline ? "bg-emerald-500" : "bg-slate-400"
+              className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ring-2 ring-white ${
+                isPeerOnline ? "bg-[#10B981]" : "bg-[#94A3B8]"
               }`}
             />
           </div>
 
-          <div className="min-w-0">
-            <div className="flex items-center space-x-2">
-              <h3 className="text-sm font-bold text-slate-900 leading-none truncate font-sans">
-                {activePeer}
-              </h3>
+          <div className="min-w-0 flex items-center flex-wrap gap-x-3 gap-y-0.5">
+            <span className="text-[17px] font-bold text-[#0F172A] font-sans truncate">
+              {activePeer}
+            </span>
 
-              {/* Chỉ báo trạng thái bảo mật dạng kỹ thuật */}
-              {isEncrypted ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300">
-                  <ShieldCheck className="w-3 h-3 text-emerald-600 flex-shrink-0" />
-                  <span>AES-256 E2E</span>
-                </span>
-              ) : (
-                <span
-                  className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-300"
-                  title="Dữ liệu truyền trực tiếp qua TCP Socket không mã hóa payload"
-                >
-                  <ShieldAlert className="w-3 h-3 text-amber-600 flex-shrink-0" />
-                  <span>PLAINTEXT (NO KEY)</span>
-                </span>
-              )}
-            </div>
+            <span className="font-mono text-[13px] text-[#64748B]">
+              {remoteAddr}
+            </span>
 
-            {/* Trạng thái kết nối & IP:Port kỹ thuật Monospace */}
-            <div className="text-[11px] font-mono text-slate-500 mt-1 flex items-center space-x-2">
-              <span className="flex items-center space-x-1.5">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full inline-block ${
-                    isPeerOnline ? "bg-emerald-500" : "bg-slate-400"
-                  }`}
-                />
-                <span className="text-slate-600 font-medium">
-                  {isPeerOnline ? "ONLINE" : "OFFLINE"}
-                </span>
+            {/* Sleek, flat bordered badge */}
+            {isEncrypted ? (
+              <span className="inline-flex items-center text-[12px] font-mono font-medium text-[#065F46] bg-[#ECFDF5] border border-[#A7F3D0] px-2.5 py-1 rounded-[4px]">
+                AES-256 E2E
               </span>
-
-              {peerInfo && (
-                <>
-                  <span className="text-slate-300">/</span>
-                  <span className="text-slate-700 font-medium">
-                    {peerInfo.ip}:{peerInfo.tcpPort}
-                  </span>
-                </>
-              )}
-            </div>
+            ) : (
+              <span
+                className="inline-flex items-center text-[12px] font-mono font-medium text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] px-2.5 py-1 rounded-[4px]"
+                title="Dữ liệu truyền trực tiếp qua TCP Socket không mã hóa payload"
+              >
+                PLAINTEXT
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Nút Xóa lịch sử */}
+        {/* Clear History Ghost Button */}
         <div className="flex-shrink-0">
           {confirmDelete ? (
-            <div className="flex items-center space-x-1.5 bg-slate-50 p-1 rounded-md border border-slate-300">
-              <span className="text-xs font-mono text-slate-600 px-1">Xác nhận xóa?</span>
+            <div className="flex items-center space-x-1.5 bg-[#F8FAFC] p-1 rounded-[6px] border border-[#E2E8F0]">
+              <span className="text-[12px] font-mono text-[#64748B] px-1.5">Xác nhận xóa?</span>
               <button
                 onClick={() => {
                   onDeleteHistory();
                   setConfirmDelete(false);
                 }}
-                className="text-xs font-mono bg-rose-600 hover:bg-rose-700 text-white px-2 py-0.5 rounded transition-colors font-medium"
+                className="text-[12px] font-mono bg-[#0F172A] hover:bg-[#1E293B] text-white px-2.5 py-1 rounded-[4px] transition-colors font-medium"
               >
                 XÓA
               </button>
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="text-xs font-mono text-slate-500 hover:text-slate-800 px-1.5 py-0.5"
+                className="text-[12px] font-mono text-[#64748B] hover:text-[#0F172A] px-2 py-1"
               >
                 HỦY
               </button>
@@ -222,7 +188,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           ) : (
             <button
               onClick={() => setConfirmDelete(true)}
-              className="text-slate-400 hover:text-rose-600 p-1.5 rounded-md hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
+              className="text-[#64748B] hover:text-[#0F172A] p-2 rounded-[6px] hover:bg-[#F1F5F9] transition-colors"
               title="Xóa toàn bộ lịch sử tin nhắn với peer này"
             >
               <Trash2 className="w-4 h-4" />
@@ -231,64 +197,59 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       </div>
 
-      {/* 
-        YÊU CẦU 1: System Event Bar dạng dòng lệnh (Monospace) tối giản
-        Bám sát ngay dưới phần Header, thay thế hoàn toàn card handshake log giữa màn hình
-      */}
-      <div className="border-b border-slate-200 bg-slate-900 text-slate-300 px-4 py-1.5 text-[11px] font-mono flex items-center justify-between select-none">
-        <div className="flex items-center gap-2 truncate">
-          <span className="text-emerald-400 font-bold flex items-center gap-1.5 flex-shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
+      {/* 2. Sub-header (Connection Bar, height: 40px, full-width with 28px padding) */}
+      <div className="h-[40px] min-h-[40px] border-b border-[#E2E8F0] bg-[#F8FAFC] px-[28px] text-[12.5px] font-mono text-[#64748B] flex items-center justify-between select-none">
+        <div className="flex items-center gap-2.5 truncate">
+          <span className="flex items-center gap-1.5 font-semibold text-[#0F172A] flex-shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] inline-block" />
             TCP_SOCKET
           </span>
-          <span className="text-slate-600">/</span>
-          <span className="text-slate-300 truncate">
-            PEER: <strong className="text-slate-100 font-semibold">{remoteAddr}</strong>
+          <span className="text-[#CBD5E1]">|</span>
+          <span className="truncate">
+            PEER: <strong className="text-[#0F172A] font-medium">{remoteAddr}</strong>
           </span>
-          <span className="text-slate-600 hidden sm:inline">|</span>
-          <span className="text-slate-400 hidden sm:inline">MTU: 64KB</span>
-          <span className="text-slate-600 hidden md:inline">|</span>
-          <span className={`hidden md:inline font-semibold ${isEncrypted ? "text-emerald-400" : "text-amber-400"}`}>
+          <span className="text-[#CBD5E1] hidden sm:inline">|</span>
+          <span className="hidden sm:inline">MTU: 64KB</span>
+          <span className="text-[#CBD5E1] hidden md:inline">|</span>
+          <span className={`hidden md:inline font-medium ${isEncrypted ? "text-[#10B981]" : "text-[#D97706]"}`}>
             SEC: {isEncrypted ? "AES-256 (SESSION KEY ACTIVE)" : "STAGE-1 PLAINTEXT"}
           </span>
         </div>
 
         <button
           onClick={() => setIsEventBarExpanded(!isEventBarExpanded)}
-          className="text-slate-400 hover:text-slate-200 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-800 transition-colors flex-shrink-0 ml-2"
+          className="border border-[#CBD5E1] bg-white px-3 py-1 rounded-[6px] text-[12px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] transition-colors flex items-center gap-1.5 shadow-2xs flex-shrink-0 ml-2 cursor-pointer"
           title={isEventBarExpanded ? "Thu gọn chi tiết bắt tay" : "Xem chi tiết bắt tay kết nối"}
         >
-          <span className="text-[10px] uppercase font-bold tracking-wider">
-            {isEventBarExpanded ? "Ẩn chi tiết" : "Handshake"}
-          </span>
-          {isEventBarExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          <span>{isEventBarExpanded ? "ẨN HANDSHAKE" : "HANDSHAKE"}</span>
+          {isEventBarExpanded ? <ChevronUp className="w-3.5 h-3.5 text-[#64748B]" /> : <ChevronDown className="w-3.5 h-3.5 text-[#64748B]" />}
         </button>
       </div>
 
-      {/* Chi tiết Handshake mỏng khi mở rộng */}
+      {/* Handshake Details Drawer */}
       {isEventBarExpanded && (
-        <div className="bg-slate-950 border-b border-slate-800 px-4 py-2 font-mono text-[11px] space-y-1 text-slate-300 select-text">
+        <div className="bg-[#F8FAFC] border-b border-[#E2E8F0] px-[28px] py-3 font-mono text-[12px] space-y-1.5 text-[#0F172A] select-text">
           <div className="flex items-center gap-2">
-            <span className="text-emerald-400 font-bold">[OK]</span>
-            <span>Registry discovery resolved:</span>
-            <span className="text-white font-semibold">{remoteAddr}</span>
+            <span className="text-[#10B981] font-bold">[OK]</span>
+            <span className="text-[#64748B]">Registry discovery resolved:</span>
+            <span className="font-semibold text-[#0F172A]">{remoteAddr}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-emerald-400 font-bold">[OK]</span>
-            <span>Direct TCP Socket pipe established • Window buffer: 64KB</span>
+            <span className="text-[#10B981] font-bold">[OK]</span>
+            <span className="text-[#64748B]">Direct TCP Socket pipe established • Window buffer: 64KB</span>
           </div>
           <div className="flex items-center gap-2">
             {isEncrypted ? (
               <>
-                <span className="text-emerald-400 font-bold">[OK]</span>
-                <span className="text-emerald-300 font-medium">
+                <span className="text-[#10B981] font-bold">[OK]</span>
+                <span className="text-[#065F46] font-medium">
                   E2E Encrypted channel active • Kerberos session ticket confirmed
                 </span>
               </>
             ) : (
               <>
-                <span className="text-amber-400 font-bold">[WARN]</span>
-                <span className="text-amber-300 font-medium">
+                <span className="text-[#D97706] font-bold">[WARN]</span>
+                <span className="text-[#B45309] font-medium">
                   Unencrypted socket (Plaintext payload) • Stage 1 architecture
                 </span>
               </>
@@ -297,31 +258,53 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       )}
 
-      {/* 
-        YÊU CẦU 2: Tái cấu trúc khung Chat & Bong bóng tin nhắn
-        - Thu hẹp khoảng cách: space-y-2.5 thay vì space-y-4
-        - Bỏ rounded-2xl, chuyển sang rounded-lg
-        - Viền mảnh border-slate-200/border-slate-800 tạo chiều sâu công nghệ
-      */}
-      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
-        <div className="max-w-4xl xl:max-w-5xl mx-auto w-full space-y-2.5">
-          {messages.length === 0 ? (
-            <div className="py-12 flex flex-col items-center justify-center text-center text-slate-400 space-y-1.5">
-              <Terminal className="w-8 h-8 text-slate-300 stroke-1 mb-1" />
-              <p className="text-xs font-mono uppercase tracking-wider font-semibold text-slate-600">
-                Kênh truyền TCP đang rỗng
-              </p>
-              <p className="text-xs text-slate-400 max-w-xs font-sans">
-                Nhập tin nhắn hoặc gửi tệp bên dưới để bắt đầu trao đổi dữ liệu trực tiếp qua Socket.
-              </p>
-            </div>
-          ) : (
-            messages.map((msg) => {
+      {/* 3. Chat Stream & Message Bubbles (Full-width with 28px horizontal padding) */}
+      <div className="flex-1 overflow-y-auto bg-white px-[28px] py-5 flex flex-col space-y-4 w-full">
+        {/* Subtle Session Security Notice Box */}
+        <div className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] px-4 py-3 flex items-center justify-between text-[13px] font-sans text-[#334155] select-none flex-shrink-0">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <Shield className={`w-4 h-4 flex-shrink-0 ${isEncrypted ? "text-[#10B981]" : "text-[#D97706]"}`} />
+            <span className="truncate">
+              Kênh truyền TCP trực tiếp với <strong className="font-semibold text-[#0F172A]">{activePeer}</strong>{" "}
+              <span className="font-mono text-[12px] text-[#64748B]">({remoteAddr})</span> • Chế độ:{" "}
+              <strong className={isEncrypted ? "text-[#065F46] font-semibold" : "text-[#B45309] font-semibold"}>
+                {isEncrypted ? "AES-256 E2E (Đã mã hóa phiên)" : "Plaintext (Chưa mã hóa)"}
+              </strong>
+              {!isEncrypted && " • Nhấn Handshake để thiết lập khóa phiên"}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsEventBarExpanded((prev) => !prev)}
+            className="text-[12px] font-mono font-medium text-[#64748B] hover:text-[#0F172A] hover:underline flex-shrink-0 ml-3 cursor-pointer"
+          >
+            {isEventBarExpanded ? "Ẩn chi tiết" : "Chi tiết"}
+          </button>
+        </div>
+
+        {messages.length === 0 ? (
+          <div className="py-20 flex-1 flex flex-col items-center justify-center text-center text-[#64748B] space-y-2">
+            <Terminal className="w-8 h-8 text-[#94A3B8] stroke-1 mb-1" />
+            <p className="text-xs font-mono uppercase tracking-wider font-semibold text-[#0F172A]">
+              Kênh truyền TCP đang rỗng
+            </p>
+            <p className="text-xs text-[#64748B] max-w-sm font-sans leading-relaxed">
+              Nhập tin nhắn hoặc gửi tệp bên dưới để bắt đầu trao đổi dữ liệu trực tiếp qua Socket.
+            </p>
+          </div>
+        ) : (
+            messages.map((msg, index) => {
               const isMe = msg.direction === "out";
+              const prevMsg = index > 0 ? messages[index - 1] : null;
+              const nextMsg = index < messages.length - 1 ? messages[index + 1] : null;
+
+              const isFirstInGroup = !prevMsg || prevMsg.direction !== msg.direction;
+              const isLastInGroup = !nextMsg || nextMsg.direction !== msg.direction;
+
               const timeFormatted = new Date(msg.timestamp).toLocaleTimeString([], {
                 hour: "2-digit",
                 minute: "2-digit",
-                second: "2-digit",
+                hour12: false,
               });
 
               const fileProgress = msg.file_id ? fileTransfers[msg.file_id] : null;
@@ -329,54 +312,60 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               return (
                 <div
                   key={msg.message_id}
-                  className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
+                  className={`flex flex-col ${isMe ? "items-end" : "items-start"} ${
+                    isFirstInGroup ? (index === 0 ? "mt-0" : "mt-4") : "mt-1"
+                  }`}
                 >
-                  {/* Bong bóng tin nhắn: Bo góc vừa phải (rounded-lg) và viền mảnh sắc cạnh */}
+                  {/* Message Bubble: Solid surfaces, padding 10px 16px, border-radius 10px, max-width 65% */}
                   <div
-                    className={`max-w-lg lg:max-w-2xl rounded-lg px-3.5 py-2.5 text-sm md:text-[14.5px] leading-relaxed transition-all shadow-2xs ${
+                    className={`max-w-[65%] px-4 py-2.5 text-[15px] leading-[1.5] transition-all ${
                       isMe
-                        ? "bg-slate-900 text-slate-100 border border-slate-800"
-                        : "bg-white text-slate-900 border border-slate-200"
+                        ? `bg-[#18181B] text-white rounded-[10px] ${
+                            !isFirstInGroup ? "rounded-tr-[3px]" : ""
+                          } ${!isLastInGroup ? "rounded-br-[3px]" : ""}`
+                        : `bg-[#F1F5F9] text-[#0F172A] border border-[#E2E8F0] rounded-[10px] ${
+                            !isFirstInGroup ? "rounded-tl-[3px]" : ""
+                          } ${!isLastInGroup ? "rounded-bl-[3px]" : ""}`
                     }`}
                   >
                     {msg.type === "file" ? (
                       <div className="space-y-2 min-w-[240px]">
-                        <div className="flex items-center space-x-2.5">
+                        <div className="flex items-center space-x-3">
                           <div
-                            className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${
-                              isMe ? "bg-slate-800 text-slate-200" : "bg-slate-100 text-slate-700"
+                            className={`w-8 h-8 rounded-[6px] flex items-center justify-center flex-shrink-0 ${
+                              isMe ? "bg-zinc-800 text-zinc-200" : "bg-[#E2E8F0] text-[#0F172A]"
                             }`}
                           >
                             {fileProgress?.status === "completed" ? (
-                              <FileCheck className="w-4 h-4 text-emerald-400" />
+                              <FileCheck className="w-4 h-4 text-[#10B981]" />
                             ) : (
                               <FileText className="w-4 h-4" />
                             )}
                           </div>
-                          <div className="min-w-0">
-                            <span className="font-semibold text-xs md:text-sm font-sans break-all line-clamp-1">
+                          <div className="min-w-0 flex-1">
+                            <span className="font-semibold text-[15px] font-sans break-all line-clamp-1">
                               {msg.body}
                             </span>
                             <div
-                              className={`text-[11px] font-mono ${
-                                isMe ? "text-slate-400" : "text-slate-500"
+                              className={`text-[11.5px] font-mono ${
+                                isMe ? "text-zinc-400" : "text-[#64748B]"
                               }`}
                             >
-                              TCP P2P Stream • MTU 64KB
+                              TCP Stream • MTU 64KB
                             </div>
                           </div>
                         </div>
 
-                        {/* Thanh tiến độ truyền chunk file */}
+                        {/* Progress Bar */}
                         {fileProgress && fileProgress.status === "transferring" && (
                           <div className="space-y-1 pt-1">
-                            <div className="w-full bg-black/20 rounded-xs h-1.5 overflow-hidden">
+                            <div className="w-full bg-black/15 rounded-full h-1.5 overflow-hidden">
                               <div
-                                className="bg-emerald-400 h-full transition-all duration-150 rounded-xs"
+                                className="bg-[#10B981] h-full transition-all duration-150"
                                 style={{ width: `${fileProgress.percent}%` }}
                               />
                             </div>
-                            <div className="text-[11px] opacity-85 flex justify-between font-mono">
+                            <div className="text-[11px] opacity-80 flex justify-between font-mono">
                               <span>{fileProgress.percent}%</span>
                               <span>
                                 {fileProgress.transferredChunks}/{fileProgress.totalChunks} chunks
@@ -385,98 +374,107 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           </div>
                         )}
 
-                        {fileProgress && fileProgress.status === "completed" && (
-                          <div
-                            className={`text-[11px] font-mono font-semibold flex items-center gap-1.5 ${
-                              isMe ? "text-emerald-300" : "text-emerald-700"
-                            }`}
-                          >
-                            <CheckCheck className="w-3.5 h-3.5" /> HOÀN TẤT TRUYỀN FILE
-                          </div>
-                        )}
+                        {/* Inline metadata for file bubble */}
+                        <div className="flex items-center justify-between pt-1 font-mono text-[11.5px]">
+                          <span
+                            className={
+                              fileProgress?.status === "completed"
+                                ? "text-[#10B981] font-semibold"
+                                : isMe
+                                ? "text-zinc-400"
+                                : "text-[#64748B]"
+                          }
+                        >
+                          {fileProgress?.status === "completed" ? "COMPLETED" : "TCP_CHUNKED"}
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-1.5 ml-[10px] ${
+                            isMe ? "text-zinc-400" : "text-[#64748B]"
+                          }`}
+                        >
+                          <span>{timeFormatted}</span>
+                          {isMe && (
+                            <span>
+                              {msg.status === "delivered" && "✓ ACK"}
+                              {msg.status === "sent" && "✓"}
+                              {msg.status === "pending" && <Clock className="w-3 h-3 inline" />}
+                            </span>
+                          )}
+                        </span>
                       </div>
-                    ) : (
-                      <p className="break-words whitespace-pre-wrap">{msg.body}</p>
-                    )}
-                  </div>
-
-                  {/* Metadata bên dưới tin nhắn: Font monospace kỹ thuật */}
-                  <div className="flex items-center space-x-1.5 text-[11px] text-slate-500 mt-1 px-1 font-mono">
-                    {!isMe && <span className="font-semibold text-slate-600">{activePeer}</span>}
-                    {!isMe && <span className="text-slate-300">•</span>}
-                    <span>{timeFormatted}</span>
-                    {isMe && (
-                      <>
-                        <span className="text-slate-300">•</span>
-                        {msg.status === "pending" && (
-                          <span className="flex items-center text-amber-600">
-                            <Clock className="w-3 h-3 mr-0.5" /> QUEUED
+                    </div>
+                  ) : (
+                    /* Chat message with inline bottom-right metadata */
+                    <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+                      <span className="break-words whitespace-pre-wrap font-sans text-[15px] leading-[1.5] flex-1 min-w-[60px]">
+                        {msg.body}
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 font-mono text-[11.5px] select-none shrink-0 self-end ml-[10px] ${
+                          isMe ? "text-zinc-400" : "text-[#64748B]"
+                        }`}
+                      >
+                        <span>{timeFormatted}</span>
+                        {isMe && (
+                          <span>
+                            {msg.status === "delivered" && "✓ ACK"}
+                            {msg.status === "sent" && "✓"}
+                            {msg.status === "pending" && <Clock className="w-3 h-3 inline" />}
                           </span>
                         )}
-                        {msg.status === "sent" && (
-                          <span className="flex items-center text-slate-500">
-                            <Check className="w-3 h-3 mr-0.5" /> SENT_TCP
-                          </span>
-                        )}
-                        {msg.status === "delivered" && (
-                          <span className="flex items-center text-emerald-600 font-semibold">
-                            <CheckCheck className="w-3 h-3 mr-0.5 text-emerald-600" /> ACK_OK
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </div>
+                      </span>
+                    </div>
+                  )}
                 </div>
-              );
-            })
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+              </div>
+            );
+          })
+        )}
+        <div ref={messagesEndRef} />
       </div>
 
-      {/* 
-        YÊU CẦU 2 (tiếp): Thanh nhập liệu (Input Composer)
-        Gộp chung thành một khung duy nhất bám sát đáy, viền 1px sắc cạnh, nút gửi dạng icon phẳng tinh tế
-      */}
-      <div className="p-2.5 md:p-3 border-t border-slate-200 bg-white">
-        <div className="max-w-4xl xl:max-w-5xl mx-auto w-full">
-          <form
-            onSubmit={handleSend}
-            className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 transition-all focus-within:border-slate-500 focus-within:ring-1 focus-within:ring-slate-400 focus-within:bg-white"
+      {/* 4. Chat Input Bar (Full-width with 28px horizontal padding) */}
+      <div className="border-t border-[#E2E8F0] bg-white py-3.5 px-[28px] flex-shrink-0 w-full">
+        <form
+          onSubmit={handleSend}
+          className="w-full h-[46px] flex items-center gap-2.5 border border-[#CBD5E1] rounded-[8px] bg-[#F8FAFC] px-3 focus-within:bg-white focus-within:border-[#0F172A] transition-colors"
+        >
+          {/* Attachment icon button (20px icon) */}
+          <button
+            type="button"
+            onClick={() => setShowFileModal(true)}
+            className="p-1.5 text-[#64748B] hover:text-[#0F172A] hover:bg-[#E2E8F0]/50 rounded-[6px] transition-colors flex-shrink-0"
+            title="Đính kèm và truyền file P2P từ thiết bị"
           >
-            {/* Nút đính kèm file dạng icon phẳng */}
-            <button
-              type="button"
-              onClick={() => setShowFileModal(true)}
-              className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/70 rounded-md transition-colors flex-shrink-0"
-              title="Đính kèm và truyền file P2P từ thiết bị"
-            >
-              <Paperclip className="w-4 h-4" />
-            </button>
+            <Paperclip className="w-5 h-5" />
+          </button>
 
-            {/* Ô nhập tin nhắn */}
-            <input
-              type="text"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={`Nhập payload tin nhắn gửi trực tiếp tới ${activePeer}...`}
-              className="flex-1 bg-transparent border-none text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0 px-2 py-1 font-sans"
-            />
+          {/* Input field (15px font size) */}
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={`Nhập payload tin nhắn gửi trực tiếp tới ${activePeer}...`}
+            className="flex-1 bg-transparent border-none text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:ring-0 px-1 font-sans leading-normal"
+          />
 
-            {/* Nút gửi phẳng tinh tế không hoa mỹ */}
-            <button
-              type="submit"
-              disabled={!text.trim()}
-              className="w-8 h-8 rounded-md bg-slate-900 hover:bg-slate-800 disabled:opacity-20 text-white flex items-center justify-center transition-all flex-shrink-0"
-              title="Gửi gói tin TCP (Enter)"
-            >
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          </form>
-        </div>
+          {/* Sharp, flat send button (20px icon) */}
+          <button
+            type="submit"
+            disabled={!text.trim()}
+            className={`w-[36px] h-[36px] rounded-[6px] flex items-center justify-center transition-colors flex-shrink-0 ${
+              text.trim()
+                ? "bg-[#0F172A] text-white hover:bg-[#1E293B] cursor-pointer"
+                : "bg-[#E2E8F0] text-[#94A3B8] cursor-not-allowed"
+            }`}
+            title="Gửi gói tin TCP (Enter)"
+          >
+            <Send className="w-5 h-5" />
+          </button>
+        </form>
       </div>
 
-      {/* Input file ẩn phục vụ chọn file từ thiết bị */}
+      {/* Hidden file input */}
       <input
         type="file"
         ref={fileInputRef}
@@ -484,20 +482,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         className="hidden"
       />
 
-      {/* Modal gửi file phong cách Workbench kỹ thuật */}
+      {/* File Transfer Modal */}
       {showFileModal && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg border border-slate-300 max-w-lg w-full p-5 space-y-4 shadow-xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+        <div className="fixed inset-0 bg-[#0F172A]/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[8px] border border-[#E2E8F0] max-w-lg w-full p-5 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
               <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-md bg-slate-100 text-slate-700 flex items-center justify-center font-mono">
-                  <FolderOpen className="w-4 h-4 text-slate-700" />
+                <div className="w-7 h-7 rounded-[4px] bg-[#F1F5F9] text-[#0F172A] flex items-center justify-center font-mono">
+                  <FolderOpen className="w-4 h-4 text-[#0F172A]" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-slate-900 font-mono uppercase tracking-wider">
+                  <h4 className="text-xs font-bold text-[#0F172A] font-mono uppercase tracking-wider">
                     P2P File Transfer Protocol
                   </h4>
-                  <p className="text-xs text-slate-500 font-sans">
+                  <p className="text-[11px] text-[#64748B] font-sans">
                     Truyền tệp trực tiếp qua kênh TCP Socket chia đoạn 64KB
                   </p>
                 </div>
@@ -509,44 +507,44 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   setSelectedFile(null);
                   setFilePathInput("");
                 }}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-100"
+                className="text-[#64748B] hover:text-[#0F172A] p-1 rounded-[4px] hover:bg-[#F1F5F9]"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Khu vực bấm chọn file từ thiết bị hoặc kéo thả */}
+            {/* Dropzone */}
             <div
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleFileDrop}
-              className="border border-dashed border-slate-300 hover:border-slate-500 hover:bg-slate-50 rounded-lg p-5 text-center cursor-pointer transition-all space-y-2 group"
+              className="border border-dashed border-[#CBD5E1] hover:border-[#0F172A] hover:bg-[#F8FAFC] rounded-[6px] p-5 text-center cursor-pointer transition-all space-y-1.5"
             >
-              <div className="w-9 h-9 rounded-md bg-slate-100 group-hover:bg-slate-200 text-slate-600 flex items-center justify-center mx-auto transition-colors">
-                <UploadCloud className="w-5 h-5 text-slate-600" />
+              <div className="w-8 h-8 rounded-[4px] bg-[#F1F5F9] text-[#64748B] flex items-center justify-center mx-auto transition-colors">
+                <UploadCloud className="w-4 h-4 text-[#64748B]" />
               </div>
               <div>
-                <p className="text-xs md:text-sm font-semibold text-slate-800 font-sans">
+                <p className="text-xs font-medium text-[#0F172A] font-sans">
                   Chọn tệp từ thiết bị máy tính
                 </p>
-                <p className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                <p className="text-[10px] text-[#64748B] mt-0.5 font-mono">
                   hoặc kéo thả tệp vào khung này
                 </p>
               </div>
             </div>
 
-            {/* Chi tiết file đã chọn */}
+            {/* Selected File Details */}
             {selectedFile && (
-              <div className="bg-slate-50 border border-slate-200 rounded-md p-3 flex items-center justify-between">
+              <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[6px] p-2.5 flex items-center justify-between">
                 <div className="flex items-center space-x-2.5 truncate">
-                  <div className="w-7 h-7 rounded bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
-                    <FileCheck className="w-4 h-4" />
+                  <div className="w-6 h-6 rounded bg-[#ECFDF5] text-[#10B981] flex items-center justify-center flex-shrink-0">
+                    <FileCheck className="w-3.5 h-3.5" />
                   </div>
                   <div className="truncate min-w-0">
-                    <div className="text-xs font-semibold text-slate-900 truncate font-mono">
+                    <div className="text-xs font-medium text-[#0F172A] truncate font-mono">
                       {selectedFile.name}
                     </div>
-                    <div className="text-[11px] text-slate-500 font-mono">
+                    <div className="text-[10px] text-[#64748B] font-mono">
                       {formatFileSize(selectedFile.size)} • MTU chunks: 64KB
                     </div>
                   </div>
@@ -558,7 +556,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     setSelectedFile(null);
                     setFilePathInput("");
                   }}
-                  className="text-slate-400 hover:text-rose-600 p-1 rounded-md"
+                  className="text-[#64748B] hover:text-[#0F172A] p-1 rounded-[4px]"
                   title="Bỏ chọn tệp"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -568,7 +566,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
             <form onSubmit={handleFileSubmit} className="space-y-3.5">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 font-mono uppercase tracking-wider">
+                <label className="block text-[11px] font-semibold text-[#0F172A] mb-1 font-mono uppercase tracking-wider">
                   Target File Path / Name
                 </label>
                 <input
@@ -576,11 +574,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   value={filePathInput}
                   onChange={(e) => setFilePathInput(e.target.value)}
                   placeholder="D:\workspace\report.pdf hoặc data.bin"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-md px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-500 focus:bg-white"
+                  className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] px-3 py-1.5 text-xs font-mono text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white"
                 />
               </div>
 
-              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+              <div className="flex justify-end space-x-2 pt-2 border-t border-[#E2E8F0]">
                 <button
                   type="button"
                   onClick={() => {
@@ -588,14 +586,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     setSelectedFile(null);
                     setFilePathInput("");
                   }}
-                  className="px-3.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-md transition-colors font-mono"
+                  className="px-3 py-1 text-xs text-[#64748B] hover:bg-[#F1F5F9] rounded-[4px] transition-colors font-mono"
                 >
                   HỦY
                 </button>
                 <button
                   type="submit"
                   disabled={!filePathInput.trim()}
-                  className="px-4 py-1.5 text-xs bg-slate-900 hover:bg-slate-800 disabled:opacity-30 text-white rounded-md transition-colors font-mono font-semibold"
+                  className="px-3.5 py-1 text-xs bg-[#0F172A] hover:bg-[#1E293B] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] text-white rounded-[4px] transition-colors font-mono font-medium"
                 >
                   STREAM FILE VIA TCP
                 </button>
