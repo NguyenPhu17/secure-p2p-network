@@ -100,8 +100,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="text-sm font-semibold text-slate-900 truncate font-sans">
                       {peer.displayName}
                     </div>
-                    <div className="text-[11px] text-slate-500 font-mono mt-0.5 font-normal">
-                      {peer.ip}:{peer.tcpPort}
+                    <div className="text-[11px] text-slate-500 font-mono mt-0.5 font-normal flex items-center gap-1.5 truncate">
+                      <span>{peer.ip}:{peer.tcpPort}</span>
+                      {peer.nodeId && (
+                        <span className="text-[10px] bg-slate-100 text-teal-700 font-semibold px-1 py-0.2 rounded border border-slate-200" title={`DHT Node ID: ${peer.nodeId}`}>
+                          ID:{peer.nodeId.substring(0, 6)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

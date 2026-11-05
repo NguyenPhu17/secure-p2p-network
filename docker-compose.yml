@@ -26,14 +26,12 @@ services:
       - PEER_ADVERTISE_IP=peer-alice
       - PEER_TCP_PORT=8001
       - PEER_UI_PORT=3001
-      - REGISTRY_HOST=registry
-      - REGISTRY_PORT=7000
+      - DISCOVERY_MODE=dht
+      - BOOTSTRAP_PEERS=
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
       - ./logs:/app/logs
-    depends_on:
-      - registry
     networks:
       - p2p-net
 
@@ -51,14 +49,12 @@ services:
       - PEER_ADVERTISE_IP=peer-bob
       - PEER_TCP_PORT=8002
       - PEER_UI_PORT=3002
-      - REGISTRY_HOST=registry
-      - REGISTRY_PORT=7000
+      - DISCOVERY_MODE=dht
+      - BOOTSTRAP_PEERS=peer-alice:8001
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
       - ./logs:/app/logs
-    depends_on:
-      - registry
     networks:
       - p2p-net
 
@@ -76,14 +72,12 @@ services:
       - PEER_ADVERTISE_IP=peer-charlie
       - PEER_TCP_PORT=8003
       - PEER_UI_PORT=3003
-      - REGISTRY_HOST=registry
-      - REGISTRY_PORT=7000
+      - DISCOVERY_MODE=dht
+      - BOOTSTRAP_PEERS=peer-bob:8002,peer-alice:8001
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
       - ./logs:/app/logs
-    depends_on:
-      - registry
     networks:
       - p2p-net
 

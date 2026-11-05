@@ -33,9 +33,11 @@ export class UIBridge {
           event: "INITIAL_STATE",
           data: {
             me: this.peerController.displayName,
+            nodeId: this.peerController.getNodeId(),
             tcpPort: this.peerController.tcpPort,
+            discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
-            channelStatus: "Plaintext (Chưa mã hóa - Chờ GĐ 2 KDC)",
+            channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
           }
         });
@@ -78,9 +80,11 @@ export class UIBridge {
           event: "INITIAL_STATE",
           data: {
             me: this.peerController.displayName,
+            nodeId: this.peerController.getNodeId(),
             tcpPort: this.peerController.tcpPort,
+            discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
-            channelStatus: "Plaintext (Chưa mã hóa - Chờ GĐ 2 KDC)",
+            channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
           }
         });

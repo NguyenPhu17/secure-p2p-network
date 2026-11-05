@@ -12,7 +12,7 @@ export interface LogEntry {
   timestamp: number;
   timeStr: string;
   level: "INFO" | "WARN" | "ERROR" | "DEBUG";
-  category: "PROTOCOL" | "NETWORK" | "STORAGE" | "SYSTEM";
+  category: "PROTOCOL" | "NETWORK" | "STORAGE" | "SYSTEM" | "DHT";
   direction?: "IN" | "OUT" | "INTERNAL";
   messageType?: string;
   peer?: string;

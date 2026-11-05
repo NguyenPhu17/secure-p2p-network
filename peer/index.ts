@@ -14,6 +14,8 @@ let uiPort = process.env.PEER_UI_PORT ? parseInt(process.env.PEER_UI_PORT, 10) :
 let registryPort = process.env.REGISTRY_PORT ? parseInt(process.env.REGISTRY_PORT, 10) : 7000;
 let registryHost = process.env.REGISTRY_HOST || "127.0.0.1";
 let advertiseIp = process.env.PEER_ADVERTISE_IP || "127.0.0.1";
+let discoveryMode: "dht" | "registry" | "hybrid" = (process.env.DISCOVERY_MODE as any) || "dht";
+let bootstrapRaw = process.env.BOOTSTRAP_PEERS || "";
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--name" && args[i + 1]) displayName = args[i + 1];
@@ -22,6 +24,20 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === "--registryPort" && args[i + 1]) registryPort = parseInt(args[i + 1], 10);
   if (args[i] === "--registryHost" && args[i + 1]) registryHost = args[i + 1];
   if (args[i] === "--ip" && args[i + 1]) advertiseIp = args[i + 1];
+  if (args[i] === "--mode" && args[i + 1]) discoveryMode = args[i + 1] as any;
+  if (args[i] === "--bootstrap" && args[i + 1]) bootstrapRaw = args[i + 1];
+}
+
+// Chuyển đổi chuỗi bootstrap thành mảng { ip, port }
+const bootstrapPeers: Array<{ ip: string; port: number }> = [];
+if (bootstrapRaw) {
+  const parts = bootstrapRaw.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const part of parts) {
+    const [bIp, bPortStr] = part.split(":");
+    if (bIp && bPortStr) {
+      bootstrapPeers.push({ ip: bIp, port: parseInt(bPortStr, 10) });
+    }
+  }
 }
 
 async function main() {
@@ -30,7 +46,9 @@ async function main() {
     tcpPort,
     ip: advertiseIp,
     registryHost,
-    registryPort
+    registryPort,
+    bootstrapPeers,
+    discoveryMode
   });
 
   const uiBridge = new UIBridge(controller, uiPort, controller.getLogger());
@@ -39,7 +57,13 @@ async function main() {
   console.log(`🚀 Khởi động Peer: ${displayName}`);
   console.log(`   P2P Direct TCP Port: ${tcpPort}`);
   console.log(`   UI WebSocket Port  : ${uiPort}`);
-  console.log(`   Registry Address   : ${registryHost}:${registryPort}`);
+  console.log(`   Discovery Mode     : ${discoveryMode.toUpperCase()}`);
+  if (discoveryMode === "dht") {
+    console.log(`   DHT Node ID (SHA-1): ${controller.getNodeId()}`);
+    console.log(`   Bootstrap Peers    : ${bootstrapPeers.length > 0 ? bootstrapPeers.map(b => `${b.ip}:${b.port}`).join(", ") : "(None - Seed Node)"}`);
+  } else {
+    console.log(`   Registry Address   : ${registryHost}:${registryPort}`);
+  }
   console.log(`========================================================`);
 
   await controller.start();

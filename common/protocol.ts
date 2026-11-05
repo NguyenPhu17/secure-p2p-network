@@ -4,13 +4,23 @@
  */
 
 export enum MessageType {
-  // Registry & Discovery
+  // Registry & Discovery (Centralized / Legacy)
   REGISTER = "REGISTER",
   REGISTER_ACK = "REGISTER_ACK",
   HEARTBEAT = "HEARTBEAT",
   HEARTBEAT_ACK = "HEARTBEAT_ACK",
   PEER_JOINED = "PEER_JOINED",
   PEER_LEFT = "PEER_LEFT",
+
+  // Decentralized P2P DHT (Kademlia Distributed Hash Table)
+  DHT_PING = "DHT_PING",
+  DHT_PONG = "DHT_PONG",
+  DHT_FIND_NODE = "DHT_FIND_NODE",
+  DHT_FIND_NODE_RESP = "DHT_FIND_NODE_RESP",
+  DHT_STORE = "DHT_STORE",
+  DHT_STORE_ACK = "DHT_STORE_ACK",
+  DHT_FIND_VALUE = "DHT_FIND_VALUE",
+  DHT_FIND_VALUE_RESP = "DHT_FIND_VALUE_RESP",
 
   // P2P Chat
   CHAT = "CHAT",
@@ -36,6 +46,7 @@ export interface PeerInfo {
   ip: string;
   tcpPort: number;
   lastSeen?: number;
+  nodeId?: string; // 160-bit hex ID trong không gian Kademlia DHT
 }
 
 /**
@@ -119,4 +130,61 @@ export interface ErrorPayload {
   code: string;
   message: string;
 }
+
+// -------------------------------------------------------------
+// PAYLOADS CHO GIAO THỨC DHT (KADEMLIA DISTRIBUTED HASH TABLE)
+// -------------------------------------------------------------
+
+export interface DhtPingPayload {
+  senderNodeId: string;
+  senderInfo: PeerInfo;
+}
+
+export interface DhtPongPayload {
+  req_id: string; // message_id của DHT_PING gốc
+  responderNodeId: string;
+  responderInfo: PeerInfo;
+}
+
+export interface DhtFindNodePayload {
+  targetNodeId: string;
+  senderNodeId: string;
+  senderInfo: PeerInfo;
+}
+
+export interface DhtFindNodeRespPayload {
+  req_id: string; // message_id của DHT_FIND_NODE gốc
+  targetNodeId: string;
+  nodes: PeerInfo[];
+}
+
+export interface DhtStorePayload {
+  key: string;
+  value: any;
+  ttlMs?: number;
+  publisher: string;
+  publisherNodeId: string;
+}
+
+export interface DhtStoreAckPayload {
+  req_id: string; // message_id của DHT_STORE gốc
+  key: string;
+  status: "OK" | "FAILED";
+  reason?: string;
+}
+
+export interface DhtFindValuePayload {
+  key: string;
+  senderNodeId: string;
+  senderInfo: PeerInfo;
+}
+
+export interface DhtFindValueRespPayload {
+  req_id: string; // message_id của DHT_FIND_VALUE gốc
+  key: string;
+  found: boolean;
+  value?: any;
+  nodes?: PeerInfo[];
+}
+
 

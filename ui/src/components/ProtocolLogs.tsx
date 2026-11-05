@@ -29,7 +29,7 @@ interface ProtocolLogsProps {
   channelStatus?: string;
 }
 
-type LogCategoryFilter = "ALL" | "CHAT" | "FILE" | "SECURITY" | "SYSTEM";
+type LogCategoryFilter = "ALL" | "DHT" | "CHAT" | "FILE" | "SECURITY" | "SYSTEM";
 
 export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
   logs,
@@ -77,7 +77,10 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
         const cat = (log.category || "").toUpperCase();
         const sum = (log.summary || "").toUpperCase();
 
-        if (categoryFilter === "CHAT") {
+        if (categoryFilter === "DHT") {
+          const isDht = type.includes("DHT") || cat.includes("DHT") || sum.includes("DHT");
+          if (!isDht) return false;
+        } else if (categoryFilter === "CHAT") {
           const isChatOrAck =
             type.includes("CHAT") ||
             cat.includes("CHAT") ||
@@ -143,6 +146,15 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
     if (t.includes("ACK") || s.includes("ACK")) {
       return (
         <span className="bg-emerald-50 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded text-[11px] font-mono font-bold">
+          {type}
+        </span>
+      );
+    }
+
+    // 2. DHT Kademlia: màu teal
+    if (t.includes("DHT") || s.includes("DHT")) {
+      return (
+        <span className="bg-teal-50 text-teal-800 border border-teal-300 px-1.5 py-0.5 rounded text-[11px] font-mono font-bold">
           {type}
         </span>
       );
@@ -315,6 +327,7 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
               {(
                 [
                   { id: "ALL", label: "Tất cả" },
+                  { id: "DHT", label: "DHT/P2P" },
                   { id: "CHAT", label: "Chat/ACK" },
                   { id: "FILE", label: "File" },
                   { id: "SECURITY", label: "Bảo mật/KDC" },

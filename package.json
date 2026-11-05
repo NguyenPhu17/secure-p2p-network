@@ -6,13 +6,10 @@
   "scripts": {
     "registry": "tsx registry/index.ts",
     "peer": "tsx peer/index.ts",
-    "test:m1": "tsx tests/test-m1-registry.ts",
-    "test:m2": "tsx tests/test-m2-chat.ts",
-    "test:m3": "tsx tests/test-m3-file.ts",
-    "test:m4": "tsx tests/test-m4-ui-bridge.ts",
-    "test:m5": "tsx tests/test-m5-full-scenario.ts",
+    "test:dht:unit": "tsx tests/test-dht-unit.ts",
+    "test:dht": "tsx tests/test-pure-p2p-dht.ts",
     "test:mitm": "tsx tests/test-mitm-tamper.ts",
-    "test": "tsx tests/test-m5-full-scenario.ts"
+    "test": "tsx tests/test-pure-p2p-dht.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"

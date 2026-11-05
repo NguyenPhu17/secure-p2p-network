@@ -36,10 +36,15 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           </span>
         </div>
 
-        {/* Chế độ truyền */}
+        {/* Chế độ truyền & Khám phá mạng */}
         <div className="hidden md:flex items-center space-x-1.5 px-3 hover:bg-slate-200/50 transition-colors">
           <Wifi className="w-3 h-3 text-slate-500" />
           <span>SOCKET: DIRECT P2P</span>
+        </div>
+
+        <div className="hidden sm:flex items-center space-x-1.5 px-3 hover:bg-slate-200/50 transition-colors">
+          <Radio className="w-3 h-3 text-teal-600" />
+          <span>DISCOVERY: <strong className="text-teal-700 font-semibold">DHT (PURE P2P)</strong></span>
         </div>
 
         {/* Trạng thái bảo mật */}

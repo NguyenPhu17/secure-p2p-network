@@ -3,6 +3,7 @@ export interface PeerInfo {
   ip: string;
   tcpPort: number;
   lastSeen?: number;
+  nodeId?: string;
 }
 
 export interface MessageRecord {

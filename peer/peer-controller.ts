@@ -23,6 +23,7 @@ import { FileReceiver } from "./transfer/file-receiver.js";
 import { Logger } from "../common/logger.js";
 import { config } from "../common/config.js";
 import { FrameDecoder, encodeFrame } from "../common/framing.js";
+import { DhtNode } from "./dht/dht-node.js";
 
 export interface PeerControllerOptions {
   displayName: string;
@@ -30,6 +31,8 @@ export interface PeerControllerOptions {
   ip?: string;
   registryHost?: string;
   registryPort?: number;
+  bootstrapPeers?: Array<{ ip: string; port: number }>;
+  discoveryMode?: "dht" | "registry" | "hybrid";
   dbPath?: string;
   downloadDir?: string;
 }
@@ -40,6 +43,8 @@ export class PeerController {
   public readonly displayName: string;
   public readonly tcpPort: number;
   public readonly ip: string;
+  public readonly discoveryMode: "dht" | "registry" | "hybrid";
+  public readonly bootstrapPeers: Array<{ ip: string; port: number }>;
   private registryHost: string;
   private registryPort: number;
 
@@ -48,8 +53,9 @@ export class PeerController {
   private channel: IChannel;
   private fileSender: FileSender;
   private fileReceiver: FileReceiver;
+  private dht: DhtNode;
 
-  // Socket kết nối tới Registry để đăng ký và heartbeat
+  // Socket kết nối tới Registry để đăng ký và heartbeat (dùng trong chế độ registry / legacy)
   private registrySocket: net.Socket | null = null;
   private registryDecoder = new FrameDecoder();
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -67,6 +73,22 @@ export class PeerController {
     this.ip = opts.ip || "127.0.0.1";
     this.registryHost = opts.registryHost || config.registry.host;
     this.registryPort = opts.registryPort || config.registry.port;
+    this.bootstrapPeers = opts.bootstrapPeers || [];
+
+    // Tự động phân định chế độ Discovery:
+    // 1. Nếu chỉ định opts.discoveryMode -> Dùng đúng mode đó
+    // 2. Nếu có bootstrapPeers hoặc DISCOVERY_MODE="dht" -> Dùng "dht" (Pure P2P)
+    // 3. Nếu opts.registryPort được truyền trong các bài test cũ -> Dùng "registry"
+    // 4. Mặc định: "dht"
+    if (opts.discoveryMode) {
+      this.discoveryMode = opts.discoveryMode;
+    } else if (this.bootstrapPeers.length > 0 || process.env.DISCOVERY_MODE === "dht") {
+      this.discoveryMode = "dht";
+    } else if (opts.registryPort) {
+      this.discoveryMode = "registry";
+    } else {
+      this.discoveryMode = "dht";
+    }
 
     this.logger = new Logger(`Peer:${this.displayName}`, config.peer.maxLogEntries);
     this.logger.enableFileLogging();
@@ -81,6 +103,30 @@ export class PeerController {
     // Khởi tạo File Transfer engine
     this.fileSender = new FileSender(this.channel, this.displayName, this.logger);
     this.fileReceiver = new FileReceiver(this.channel, this.displayName, this.logger, opts.downloadDir);
+
+    // Khởi tạo Kademlia DHT Node (luôn khả dụng cho các tương tác DHT phân tán)
+    this.dht = new DhtNode({
+      displayName: this.displayName,
+      ip: this.ip,
+      tcpPort: this.tcpPort,
+      channel: this.channel,
+      logger: this.logger
+    });
+
+    // Lắng nghe sự kiện khám phá peer từ DHT
+    this.dht.onPeerJoined((peer) => {
+      if (peer.displayName !== this.displayName) {
+        this.onlinePeers.set(peer.displayName, peer);
+        this.store.upsertPeer(peer);
+        this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+        this.flushPendingMessages(peer.displayName);
+      }
+    });
+
+    this.dht.onPeerLeft((peer) => {
+      this.onlinePeers.delete(peer.displayName);
+      this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+    });
   }
 
   public getLogger(): Logger {
@@ -89,6 +135,14 @@ export class PeerController {
 
   public getStore(): MessageStore {
     return this.store;
+  }
+
+  public getDhtNode(): DhtNode {
+    return this.dht;
+  }
+
+  public getNodeId(): string {
+    return this.dht.localNodeId;
   }
 
   public onUIEvent(listener: UIEventCallback): void {
@@ -109,7 +163,10 @@ export class PeerController {
    * Khởi động Peer Node
    */
   public async start(): Promise<void> {
-    this.logger.info("SYSTEM", `Khởi động Peer Node '${this.displayName}' trên cổng TCP ${this.tcpPort}...`);
+    this.logger.info(
+      "SYSTEM",
+      `Khởi động Peer Node '${this.displayName}' trên cổng TCP ${this.tcpPort}... [Chế độ Discovery: ${this.discoveryMode.toUpperCase()}]`
+    );
 
     // 1. Khởi động P2P Channel
     await this.channel.init();
@@ -119,8 +176,19 @@ export class PeerController {
       this.handleIncomingP2PMessage(msg, from);
     });
 
-    // 3. Kết nối và Đăng ký với Registry (Mock KDC)
-    await this.connectAndRegisterToRegistry();
+    // 3. Khởi động DHT Node
+    await this.dht.start();
+
+    // 4. Gia nhập mạng theo chế độ đã chọn
+    if (this.discoveryMode === "dht") {
+      this.logger.info("DHT", "🚀 Mạng hoạt động chế độ Phi tập trung hoàn toàn (Pure P2P DHT Kademlia). Không cần Registry SPOF!");
+      await this.dht.bootstrap(this.bootstrapPeers);
+    } else if (this.discoveryMode === "registry") {
+      await this.connectAndRegisterToRegistry();
+    } else if (this.discoveryMode === "hybrid") {
+      await this.dht.bootstrap(this.bootstrapPeers);
+      await this.connectAndRegisterToRegistry();
+    }
   }
 
   /**
@@ -280,6 +348,12 @@ export class PeerController {
    * Xử lý gói tin P2P nhận được từ một Peer khác
    */
   private async handleIncomingP2PMessage(msg: BaseMessage, from?: { ip: string; port: number }): Promise<void> {
+    // 1. Nếu là thông điệp thuộc giao thức DHT Kademlia, chuyển trực tiếp cho DHT Node xử lý
+    if (msg.type.startsWith("DHT_")) {
+      await this.dht.handleIncomingMessage(msg, from);
+      return;
+    }
+
     this.logger.info(
       "PROTOCOL",
       `Nhận [${msg.type}] từ peer '${msg.sender}' (seq: ${msg.seq})`,
@@ -403,7 +477,13 @@ export class PeerController {
    * Gửi phản hồi CHAT_ACK cho bên gửi
    */
   private async sendChatAck(targetPeer: string, originalMessageId: string): Promise<void> {
-    const peer = this.onlinePeers.get(targetPeer);
+    let peer = this.onlinePeers.get(targetPeer);
+    if (!peer) {
+      peer = this.dht.getKnownPeers().find((p) => p.displayName === targetPeer);
+    }
+    if (!peer) {
+      peer = this.store.getPeer(targetPeer) || undefined;
+    }
     if (!peer) return;
 
     const ackMsg: BaseMessage<ChatAckPayload> = {
@@ -459,7 +539,13 @@ export class PeerController {
    * Thử gửi một tin nhắn đi (hỗ trợ cả tin mới và gửi lại tin pending)
    */
   private async attemptSendMessage(record: MessageRecord): Promise<boolean> {
-    const peer = this.onlinePeers.get(record.receiver);
+    let peer = this.onlinePeers.get(record.receiver);
+    if (!peer) {
+      peer = this.dht.getKnownPeers().find((p) => p.displayName === record.receiver);
+      if (peer) {
+        this.onlinePeers.set(peer.displayName, peer);
+      }
+    }
 
     if (!peer) {
       this.logger.warn(
@@ -546,6 +632,14 @@ export class PeerController {
   }
 
   public getOnlinePeers(): PeerInfo[] {
+    if (this.discoveryMode === "dht" || this.onlinePeers.size === 0) {
+      const dhtPeers = this.dht.getKnownPeers();
+      for (const p of dhtPeers) {
+        if (p.displayName !== this.displayName && !this.onlinePeers.has(p.displayName)) {
+          this.onlinePeers.set(p.displayName, p);
+        }
+      }
+    }
     return Array.from(this.onlinePeers.values());
   }
 
@@ -565,6 +659,7 @@ export class PeerController {
   public async close(): Promise<void> {
     this.isClosing = true;
     this.stopHeartbeat();
+    await this.dht.close();
     if (this.registrySocket) {
       this.registrySocket.removeAllListeners();
       if (!this.registrySocket.destroyed) {

@@ -217,6 +217,12 @@ export class MessageStore {
     return stmt.all() as any[];
   }
 
+  public getPeer(peerName: string): PeerInfo | null {
+    const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen FROM peers WHERE peer_name = ?");
+    const row = stmt.get(peerName) as any;
+    return row || null;
+  }
+
   /**
    * Quản lý Metadata File
    */

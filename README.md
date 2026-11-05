@@ -5,10 +5,16 @@ Dự án triển khai theo kiến trúc mạng phân tán Peer-to-Peer (P2P) k�
 
 ---
 
-## 📌 PHẠM VI GIAI ĐOẠN 1
-- **Phần phân tán**: Registry Node (Mock KDC), Peer Backend mở kết nối TCP Socket thô trực tiếp giữa các Peer, cơ chế Framing 4-bytes Length-prefixed chống vỡ/dính gói tin, chia nhỏ file thành chunk 64KB, hàng đợi tin nhắn offline, chống trùng tin nhắn qua UUID (`message_id`).
+## 📌 PHẠM VI & KIẾN TRÚC HỆ THỐNG
+- **Kiến trúc Phi tập trung hoàn toàn (Pure P2P DHT - Zero SPOF)**:
+  - Hệ thống sử dụng bảng băm phân tán **Kademlia DHT** để các peer tự khám phá lẫn nhau mà **không cần bất kỳ Registry trung tâm nào**.
+  - Không gian định danh 160-bit SHA-1, khoảng cách metric XOR \(d(x, y) = x \oplus y\), 160 K-Buckets kết hợp thuật toán trục xuất LRU.
+  - Các hàm RPC giao thức: `DHT_PING`, `DHT_PONG`, `DHT_FIND_NODE`, `DHT_FIND_NODE_RESP`, `DHT_STORE`, `DHT_FIND_VALUE`.
+  - Cơ chế giám sát sống/chết (Liveness Check) phi tập trung thông qua chu kỳ DHT Ping định kỳ giữa các peer, loại bỏ hoàn toàn Single Point of Failure (SPOF).
+- **Phần truyền nhận TCP P2P Direct**:
+  - Peer Backend mở kết nối TCP Socket thô trực tiếp giữa các Peer, cơ chế Framing 4-bytes Length-prefixed chống vỡ/dính gói tin, chia nhỏ file thành chunk 64KB, hàng đợi tin nhắn offline, chống trùng tin nhắn qua UUID (`message_id`).
 - **Lưu trữ cục bộ**: Mỗi Peer sở hữu database SQLite độc lập (`better-sqlite3` / `node:sqlite`), tối ưu hóa RAM với WAL mode và giới hạn cache 2MB.
-- **Giao diện**: React + Vite + Tailwind CSS với bố cục 3 vùng (Sidebar danh sách peer, Khung chat & tiến độ file, Panel xem Protocol Logs trực tiếp).
+- **Giao diện**: React + Vite + Tailwind CSS với bố cục 3 vùng (Sidebar hiển thị Node ID và danh sách peer, Khung chat & tiến độ file, Panel xem Protocol Logs trực tiếp có tab lọc DHT).
 - **Trạng thái bảo mật**: Truyền **Plaintext** (có chủ đích) phục vụ bắt gói tin Wireshark so sánh trước/sau khi cài đặt KDC và mã hóa ở Giai đoạn 2.
 
 ---
@@ -62,29 +68,25 @@ docker compose down
 
 ---
 
-## 💻 CÁCH 2: CHẠY THỦ CÔNG TRÊN TERMINAL (KHÔNG DÙNG DOCKER)
+## 💻 CÁCH 2: CHẠY THỦ CÔNG TRÊN TERMINAL (KHÔNG CẦN REGISTRY)
 
-### 1. Khởi động Registry (Mock KDC)
-```bash
-npm run registry
-# Lắng nghe tại TCP port 7000
-```
-
-### 2. Khởi động các Peer Backend
+### Khởi động các Peer Backend (Pure P2P DHT):
 Mở các cửa sổ Terminal riêng:
 
 ```bash
-# Terminal Peer 1 (Alice):
-npx tsx peer/index.ts --name Alice --tcpPort 8001 --uiPort 3001
+# Terminal Peer 1 (Alice - Seed Node khởi nguồn, tự trị không cần Registry):
+npx tsx peer/index.ts --name Alice --tcpPort 8001 --uiPort 3001 --mode dht
 
-# Terminal Peer 2 (Bob):
-npx tsx peer/index.ts --name Bob --tcpPort 8002 --uiPort 3002
+# Terminal Peer 2 (Bob - Gia nhập mạng bootstrap qua Alice):
+npx tsx peer/index.ts --name Bob --tcpPort 8002 --uiPort 3002 --mode dht --bootstrap 127.0.0.1:8001
 
-# Terminal Peer 3 (Charlie):
-npx tsx peer/index.ts --name Charlie --tcpPort 8003 --uiPort 3003
+# Terminal Peer 3 (Charlie - Gia nhập mạng CHỈ qua Bob, tự động tìm thấy Alice qua DHT):
+npx tsx peer/index.ts --name Charlie --tcpPort 8003 --uiPort 3003 --mode dht --bootstrap 127.0.0.1:8002
 ```
 
-### 3. Khởi động React UI
+*(Lưu ý: Hệ thống vẫn hỗ trợ chế độ `--mode registry` truyền thống nếu bạn muốn chạy cùng Registry Server tập trung `npm run registry`)*.
+
+### Khởi động React UI
 ```bash
 cd ui
 npm run dev
@@ -98,23 +100,17 @@ Mở trình duyệt:
 
 ## 🧪 CHẠY BỘ KIỂM THỬ TỰ ĐỘNG (AUTOMATED TEST SUITE)
 
-Hệ thống có đầy đủ kịch bản kiểm thử tự động cho từng mốc:
+Hệ thống có đầy đủ kịch bản kiểm thử tự động cho mạng Pure P2P DHT và các mốc truyền thống:
 
 ```bash
-# Kiểm thử Mốc 1: Registry, Đăng ký, Từ chối trùng tên, Heartbeat & Timeout
-npx tsx tests/test-m1-registry.ts
+# 1. Kiểm thử Toàn diện Mạng Pure P2P DHT Kademlia (Zero SPOF, Seed crash, Liveness pings, File transfer)
+npm run test:dht
 
-# Kiểm thử Mốc 2: Chat 1-1 qua TCP, ACK, Deduplication & Hàng đợi tin offline
-npx tsx tests/test-m2-chat.ts
+# 2. Kiểm thử Đơn vị (Unit Test) Kademlia Metric 160-bit, XOR Distance, K-Buckets & LRU Eviction
+npm run test:dht:unit
 
-# Kiểm thử Mốc 3: Truyền file chunk 64KB, ghép nối và kiểm tra tính toàn vẹn Checksum
-npx tsx tests/test-m3-file.ts
-
-# Kiểm thử Mốc 4: Cầu nối WebSocket giữa React UI và Peer Backend
-npx tsx tests/test-m4-ui-bridge.ts
-
-# Kiểm thử Mốc 5: Kịch bản toàn diện (1 Registry + 3 Peer đồng thời, ngắt kết nối, gửi bù)
-npx tsx tests/test-m5-full-scenario.ts
+# 3. Kiểm thử kịch bản Mốc 5 truyền thống (Registry + 3 Peer)
+npm run test:m5
 ```
 
 ---
