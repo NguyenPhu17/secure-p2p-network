@@ -15,7 +15,8 @@ import {
   X,
   ChevronDown,
   ChevronUp,
-  Shield
+  Shield,
+  Share2
 } from "lucide-react";
 
 interface ChatAreaProps {
@@ -405,24 +406,37 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </div>
                   ) : (
                     /* Chat message with inline bottom-right metadata */
-                    <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
-                      <span className="break-words whitespace-pre-wrap font-sans text-[15px] leading-[1.5] flex-1 min-w-[60px]">
-                        {msg.body}
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-1 font-mono text-[11.5px] select-none shrink-0 self-end ml-[10px] ${
-                          isMe ? "text-zinc-400" : "text-[#64748B]"
-                        }`}
-                      >
-                        <span>{timeFormatted}</span>
-                        {isMe && (
-                          <span>
-                            {msg.status === "delivered" && "✓ ACK"}
-                            {msg.status === "sent" && "✓"}
-                            {msg.status === "pending" && <Clock className="w-3 h-3 inline" />}
-                          </span>
-                        )}
-                      </span>
+                    <div className="flex flex-col space-y-1">
+                      <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+                        <span className="break-words whitespace-pre-wrap font-sans text-[15px] leading-[1.5] flex-1 min-w-[60px]">
+                          {msg.body}
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-1 font-mono text-[11.5px] select-none shrink-0 self-end ml-[10px] ${
+                            isMe ? "text-zinc-400" : "text-[#64748B]"
+                          }`}
+                        >
+                          <span>{timeFormatted}</span>
+                          {isMe && (
+                            <span>
+                              {msg.status === "delivered" && "✓ ACK"}
+                              {msg.status === "sent" && "✓"}
+                              {msg.status === "pending" && <Clock className="w-3 h-3 inline" />}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      {msg.relayed_by && (
+                        <div
+                          className={`text-[10.5px] font-mono flex items-center gap-1 pt-0.5 select-none ${
+                            isMe ? "text-amber-300/80" : "text-amber-600"
+                          }`}
+                          title={`Tuyến Mesh: ${msg.route ? msg.route.join(" ➔ ") : `qua ${msg.relayed_by}`}`}
+                        >
+                          <Share2 className="w-3 h-3" />
+                          <span>Mesh Relay via {msg.relayed_by}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

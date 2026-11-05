@@ -13,7 +13,9 @@ import {
   HeartbeatAckPayload,
   ChatPayload,
   ChatAckPayload,
-  PeerLeftPayload
+  PeerLeftPayload,
+  RelayForwardPayload,
+  RelayAckPayload
 } from "../common/protocol.js";
 import { IChannel } from "../common/channel.js";
 import { PlainChannel } from "./channel/plain-channel.js";
@@ -62,6 +64,14 @@ export class PeerController {
 
   // Bảng theo dõi các peer đang online trong bộ nhớ (Tối ưu RAM)
   private onlinePeers: Map<string, PeerInfo> = new Map();
+
+  // Định tuyến đa chặng Mesh Relay:
+  // 1. Giả lập chặn kết nối trực tiếp (Firewall / NAT / lỗi kết nối LAN)
+  private simulatedBlockedPeers: Set<string> = new Set();
+  // 2. Bộ nhớ đệm Node chuyển tiếp ưu tiên (Reverse Path Caching): peerName -> relayPeerName
+  private preferredRelays: Map<string, string> = new Map();
+  // 3. Cache ID các phiên relay gần nhất để chống xử lý lặp gói tin (Deduplication)
+  private processedRelaySessions: Set<string> = new Set();
 
   // Callbacks thông báo tới UI Bridge
   private uiListeners: UIEventCallback[] = [];
@@ -345,18 +355,346 @@ export class PeerController {
   }
 
   /**
-   * Xử lý gói tin P2P nhận được từ một Peer khác
+   * Giả lập chặn kết nối trực tiếp (Firewall / NAT / lỗi đường truyền mạng LAN)
+   * Phục vụ kiểm thử định tuyến đa chặng Mesh Relay
    */
-  private async handleIncomingP2PMessage(msg: BaseMessage, from?: { ip: string; port: number }): Promise<void> {
+  public simulateFirewallBlock(peerName: string, blocked = true): void {
+    if (blocked) {
+      this.simulatedBlockedPeers.add(peerName);
+      this.logger.warn("ROUTING", `🛡️ [FIREWALL SIMULATION] Đã kích hoạt tường lửa chặn kết nối trực tiếp với '${peerName}'`);
+    } else {
+      this.simulatedBlockedPeers.delete(peerName);
+      this.logger.info("ROUTING", `🔓 [FIREWALL SIMULATION] Đã mở lại kết nối trực tiếp với '${peerName}'`);
+    }
+    this.emitUI("FIREWALL_STATUS_UPDATE", { peer: peerName, blocked });
+  }
+
+  public isSimulatedBlocked(peerName: string): boolean {
+    return this.simulatedBlockedPeers.has(peerName);
+  }
+
+  public getBlockedPeers(): string[] {
+    return Array.from(this.simulatedBlockedPeers);
+  }
+
+  /**
+   * Tìm kiếm thông tin liên lạc (IP:Port) của một Peer từ RAM, DHT hoặc SQLite
+   */
+  public resolvePeerContact(peerName: string): PeerInfo | null {
+    let peer = this.onlinePeers.get(peerName);
+    if (!peer) {
+      peer = this.dht.getKnownPeers().find((p) => p.displayName === peerName);
+      if (peer) {
+        this.onlinePeers.set(peer.displayName, peer);
+      }
+    }
+    if (!peer) {
+      peer = this.store.getPeer(peerName) || undefined;
+    }
+    return peer || null;
+  }
+
+  /**
+   * Lấy danh sách các Peer trung gian tiềm năng để chuyển tiếp gói tin (Relay Candidates)
+   */
+  private getCandidateRelays(excludeTarget: string, excludeRoutes: string[] = []): PeerInfo[] {
+    const list: PeerInfo[] = [];
+    const seen = new Set<string>();
+
+    const all = [
+      ...Array.from(this.onlinePeers.values()),
+      ...this.dht.getKnownPeers(),
+      ...this.store.getKnownPeers()
+    ];
+
+    for (const p of all) {
+      if (
+        p.displayName !== this.displayName &&
+        p.displayName !== excludeTarget &&
+        !excludeRoutes.includes(p.displayName) &&
+        !this.simulatedBlockedPeers.has(p.displayName) &&
+        !seen.has(p.displayName)
+      ) {
+        seen.add(p.displayName);
+        list.push(p);
+      }
+    }
+
+    return list;
+  }
+
+  /**
+   * Gửi thông điệp tới một peer mục tiêu:
+   * 1. Thử gửi trực tiếp 1-chặng (Direct P2P Socket).
+   * 2. Nếu đường truyền trực tiếp bị lỗi (hoặc bị chặn firewall/NAT), tự động kích hoạt định tuyến đa chặng (Mesh Relay) qua peer thứ 3.
+   */
+  public async sendMessageToPeer(
+    targetPeerName: string,
+    message: BaseMessage,
+    preferredRelay?: string
+  ): Promise<{ success: boolean; relayedVia?: string; route?: string[] }> {
+    const targetContact = this.resolvePeerContact(targetPeerName);
+    if (!targetContact && !this.simulatedBlockedPeers.has(targetPeerName)) {
+      this.logger.warn(
+        "ROUTING",
+        `Peer '${targetPeerName}' hiện không online trong mạng. Không thể gửi hoặc định tuyến.`
+      );
+      return { success: false };
+    }
+
+    // 1. KIỂM TRA ĐƯỜNG TRUYỀN TRỰC TIẾP (1-HOP DIRECT SOCKET)
+    const isDirectBlocked = this.simulatedBlockedPeers.has(targetPeerName);
+
+    if (!isDirectBlocked) {
+      const peer = targetContact;
+      if (peer) {
+        const sentDirect = await this.channel.sendMessage(peer.ip, peer.tcpPort, message);
+        if (sentDirect) {
+          this.logger.info(
+            "ROUTING",
+            `⚡ [DIRECT P2P] Gửi trực tiếp 1-chặng thành công tới '${targetPeerName}' (${peer.ip}:${peer.tcpPort})`,
+            { messageType: message.type, target: targetPeerName },
+            { direction: "OUT", messageType: message.type, peer: targetPeerName }
+          );
+          return { success: true, route: [this.displayName, targetPeerName] };
+        } else {
+          this.logger.warn(
+            "ROUTING",
+            `⚠️ [DIRECT FAILED] Không thể kết nối trực tiếp tới '${targetPeerName}' (${peer.ip}:${peer.tcpPort}). Kích hoạt Mesh Relay đa chặng...`
+          );
+        }
+      }
+    } else {
+      this.logger.warn(
+        "ROUTING",
+        `🛡️ [FIREWALL/NAT] Kết nối trực tiếp 1-chặng tới '${targetPeerName}' bị chặn bởi Firewall/NAT. Tự động chuyển hướng qua Mesh Relay...`
+      );
+    }
+
+    // 2. KÍCH HOẠT ĐỊNH TUYẾN ĐA CHẶNG QUA PEER THỨ BA (MESH OVERLAY ROUTING)
+    const candidates = this.getCandidateRelays(targetPeerName, [this.displayName]);
+
+    // Ưu tiên relay đã biết (Reverse path caching) hoặc preferredRelay được chỉ định
+    const relayToTryFirst = preferredRelay || this.preferredRelays.get(targetPeerName);
+    if (relayToTryFirst) {
+      const idx = candidates.findIndex((c) => c.displayName === relayToTryFirst);
+      if (idx > -1) {
+        const [preferred] = candidates.splice(idx, 1);
+        candidates.unshift(preferred);
+      }
+    }
+
+    if (candidates.length === 0) {
+      this.logger.warn(
+        "ROUTING",
+        `❌ [MESH ROUTING] Không tìm thấy Peer trung gian nào khả dụng trong mạng để chuyển tiếp tới '${targetPeerName}'.`
+      );
+      return { success: false };
+    }
+
+    for (const relay of candidates) {
+      const relaySessionId = crypto.randomUUID();
+      const relayPayload: RelayForwardPayload = {
+        relaySessionId,
+        originSender: this.displayName,
+        finalReceiver: targetPeerName,
+        hopCount: 1,
+        maxHops: 3,
+        route: [this.displayName],
+        innerMessage: message
+      };
+
+      const relayEnvelope: BaseMessage<RelayForwardPayload> = {
+        type: MessageType.RELAY_FORWARD,
+        message_id: crypto.randomUUID(),
+        sender: this.displayName,
+        receiver: relay.displayName,
+        seq: 0,
+        timestamp: Date.now(),
+        payload: relayPayload,
+        nonce: null,
+        mac_or_signature: null
+      };
+
+      const sentToRelay = await this.channel.sendMessage(relay.ip, relay.tcpPort, relayEnvelope);
+      if (sentToRelay) {
+        const routePath = [this.displayName, relay.displayName, targetPeerName];
+        this.preferredRelays.set(targetPeerName, relay.displayName);
+        this.logger.info(
+          "ROUTING",
+          `🔀 [MESH RELAY] Đã định tuyến gói tin [${message.type}] qua Peer trung gian '${relay.displayName}' (Tuyến: ${routePath.join(" ➔ ")})`,
+          { relaySessionId, route: routePath },
+          { direction: "OUT", messageType: "RELAY_FORWARD", peer: relay.displayName }
+        );
+        return {
+          success: true,
+          relayedVia: relay.displayName,
+          route: routePath
+        };
+      } else {
+        this.logger.warn(
+          "ROUTING",
+          `Không thể kết nối tới Peer trung gian '${relay.displayName}'. Đang thử peer kế tiếp...`
+        );
+      }
+    }
+
+    return { success: false };
+  }
+
+  /**
+   * Xử lý gói tin định tuyến RELAY_FORWARD nhận được từ một Peer khác
+   */
+  private async handleRelayForwardMessage(
+    relayPayload: RelayForwardPayload,
+    from?: { ip: string; port: number }
+  ): Promise<void> {
+    const { relaySessionId, originSender, finalReceiver, hopCount, maxHops, route, innerMessage } = relayPayload;
+
+    // 1. Chống xử lý lặp lại phiên relay (Deduplication)
+    if (this.processedRelaySessions.has(relaySessionId)) {
+      this.logger.warn("ROUTING", `[RELAY DROP] Bỏ qua gói tin relay trùng lặp session: ${relaySessionId}`);
+      return;
+    }
+    this.processedRelaySessions.add(relaySessionId);
+    // Tự động xóa khỏi cache sau 60s (unref để không block process shutdown)
+    setTimeout(() => {
+      this.processedRelaySessions.delete(relaySessionId);
+    }, 60000).unref();
+
+    // 2. NẾU ĐÍCH CUỐI CÙNG LÀ CHÍNH MÌNH (Destination reached!)
+    if (finalReceiver === this.displayName) {
+      const fullRoute = [...route, this.displayName];
+      const directRelayPeer = route[route.length - 1]; // Peer trung gian trực tiếp chuyển cho mình (VD: Charlie)
+
+      this.logger.info(
+        "ROUTING",
+        `🎯 [RELAY REACHED] Đã nhận gói tin [${innerMessage.type}] từ '${originSender}' qua tuyến Mesh Relay: [${fullRoute.join(" ➔ ")}] (Tổng số chặng: ${hopCount})`,
+        { relaySessionId, fullRoute, innerType: innerMessage.type },
+        { direction: "IN", messageType: "RELAY_FORWARD", peer: originSender }
+      );
+
+      // Cập nhật reverse route cache để khi gửi lại ACK hoặc reply ta ưu tiên đi qua relay này
+      if (directRelayPeer) {
+        this.preferredRelays.set(originSender, directRelayPeer);
+      }
+
+      // Bóc tách gói tin gốc và xử lý nội bộ
+      await this.handleIncomingP2PMessage(innerMessage, from, fullRoute, directRelayPeer);
+      return;
+    }
+
+    // 3. NẾU MÌNH LÀ NODE TRUNG GIAN (INTERMEDIARY ROUTER - VD: CHARLIE)
+    // 3.1 Chống lặp vòng định tuyến (Routing Loop Prevention)
+    if (route.includes(this.displayName)) {
+      this.logger.warn(
+        "ROUTING",
+        `⚠️ [RELAY LOOP] Phát hiện vòng lặp định tuyến! Tuyến: [${route.join(" ➔ ")}] đã đi qua '${this.displayName}'. Hủy gói tin.`,
+        { relaySessionId }
+      );
+      return;
+    }
+
+    // 3.2 Kiểm tra giới hạn số chặng (TTL / Max Hops check)
+    if (hopCount >= maxHops) {
+      this.logger.warn(
+        "ROUTING",
+        `⚠️ [RELAY TTL EXCEEDED] Gói tin từ '${originSender}' tới '${finalReceiver}' vượt quá số chặng tối đa (${hopCount}/${maxHops}). Hủy gói tin.`,
+        { relaySessionId }
+      );
+      return;
+    }
+
+    this.logger.info(
+      "ROUTING",
+      `🔄 [RELAY FORWARD] Node '${this.displayName}' đóng vai trò ROUTER CHUYỂN TIẾP: Chuyển gói tin từ '${originSender}' ➔ '${finalReceiver}' (Chặng ${hopCount + 1}/${maxHops})`,
+      { relaySessionId, currentRoute: [...route, this.displayName] },
+      { direction: "INTERNAL", messageType: "RELAY_FORWARD", peer: finalReceiver }
+    );
+
+    const updatedRoute = [...route, this.displayName];
+    const nextHopPayload: RelayForwardPayload = {
+      ...relayPayload,
+      hopCount: hopCount + 1,
+      route: updatedRoute
+    };
+
+    const forwardEnvelope: BaseMessage<RelayForwardPayload> = {
+      type: MessageType.RELAY_FORWARD,
+      message_id: crypto.randomUUID(),
+      sender: this.displayName,
+      receiver: finalReceiver,
+      seq: 0,
+      timestamp: Date.now(),
+      payload: nextHopPayload,
+      nonce: null,
+      mac_or_signature: null
+    };
+
+    // 3.3 Thử chuyển tiếp trực tiếp tới đích cuối cùng (finalReceiver)
+    let targetContact = this.resolvePeerContact(finalReceiver);
+    let forwarded = false;
+
+    if (targetContact && !this.simulatedBlockedPeers.has(finalReceiver)) {
+      forwarded = await this.channel.sendMessage(targetContact.ip, targetContact.tcpPort, forwardEnvelope);
+      if (forwarded) {
+        this.logger.info(
+          "ROUTING",
+          `✅ [RELAY SUCCESS] Đã chuyển tiếp thành công gói tin tới đích '${finalReceiver}' qua tuyến: [${updatedRoute.join(" ➔ ")} ➔ ${finalReceiver}]`
+        );
+        return;
+      }
+    }
+
+    // 3.4 Nếu không gửi trực tiếp được tới finalReceiver, thử tìm relay kế tiếp (Dynamic Multi-hop Mesh)
+    if (!forwarded && nextHopPayload.hopCount < nextHopPayload.maxHops) {
+      const candidates = this.getCandidateRelays(finalReceiver, updatedRoute);
+      for (const nextRelay of candidates) {
+        forwardEnvelope.receiver = nextRelay.displayName;
+        const sent = await this.channel.sendMessage(nextRelay.ip, nextRelay.tcpPort, forwardEnvelope);
+        if (sent) {
+          this.logger.info(
+            "ROUTING",
+            `🔀 [RELAY MULTI-HOP] Không kết nối trực tiếp được '${finalReceiver}', đã chuyển tiếp qua node phụ '${nextRelay.displayName}' (Chặng ${nextHopPayload.hopCount}/${nextHopPayload.maxHops})`
+          );
+          forwarded = true;
+          break;
+        }
+      }
+    }
+
+    if (!forwarded) {
+      this.logger.error(
+        "ROUTING",
+        `❌ [RELAY FAILED] Node '${this.displayName}' không thể tìm thấy đường chuyển tiếp tới '${finalReceiver}'. Gói tin bị hủy.`
+      );
+    }
+  }
+
+  /**
+   * Xử lý gói tin P2P nhận được từ một Peer khác (trực tiếp hoặc qua Relay)
+   */
+  private async handleIncomingP2PMessage(
+    msg: BaseMessage,
+    from?: { ip: string; port: number },
+    viaRoute?: string[],
+    relayedBy?: string
+  ): Promise<void> {
     // 1. Nếu là thông điệp thuộc giao thức DHT Kademlia, chuyển trực tiếp cho DHT Node xử lý
     if (msg.type.startsWith("DHT_")) {
       await this.dht.handleIncomingMessage(msg, from);
       return;
     }
 
+    // 2. Nếu là gói tin định tuyến RELAY_FORWARD, chuyển cho Relay Router xử lý
+    if (msg.type === MessageType.RELAY_FORWARD) {
+      await this.handleRelayForwardMessage(msg.payload as RelayForwardPayload, from);
+      return;
+    }
+
     this.logger.info(
       "PROTOCOL",
-      `Nhận [${msg.type}] từ peer '${msg.sender}' (seq: ${msg.seq})`,
+      `Nhận [${msg.type}] từ peer '${msg.sender}' (seq: ${msg.seq})${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}`,
       msg.payload,
       { direction: "IN", messageType: msg.type, peer: msg.sender }
     );
@@ -377,14 +715,17 @@ export class PeerController {
           type: "chat",
           created_at: Date.now(),
           nonce: msg.nonce,
-          mac_or_signature: msg.mac_or_signature
+          mac_or_signature: msg.mac_or_signature,
+          route: viaRoute || [msg.sender, this.displayName],
+          relayed_by: relayedBy || null
         };
 
         // Lưu vào SQLite với cơ chế Deduplication
         const { isDuplicate } = this.store.saveMessage(record);
 
         // Luôn gửi lại CHAT_ACK để bên gửi biết tin đã tới (kể cả khi nhận trùng lặp)
-        await this.sendChatAck(msg.sender, msg.message_id);
+        // Ưu tiên gửi lại qua Relay nếu tin nhắn này đến qua Relay
+        await this.sendChatAck(msg.sender, msg.message_id, relayedBy);
 
         if (!isDuplicate) {
           // Chỉ phát thông báo lên UI nếu đây là tin mới
@@ -397,11 +738,16 @@ export class PeerController {
 
       case MessageType.CHAT_ACK: {
         const payload = msg.payload as ChatAckPayload;
-        this.store.updateMessageStatus(payload.ack_message_id, "delivered");
-        this.logger.info("PROTOCOL", `Tin nhắn ${payload.ack_message_id} đã được ACK (delivered).`);
+        this.store.updateMessageStatus(payload.ack_message_id, "delivered", viaRoute, relayedBy);
+        this.logger.info(
+          "PROTOCOL",
+          `Tin nhắn ${payload.ack_message_id} đã được ACK (delivered)${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}.`
+        );
         this.emitUI("MESSAGE_STATUS_UPDATE", {
           message_id: payload.ack_message_id,
-          status: "delivered"
+          status: "delivered",
+          relayed_by: relayedBy,
+          route: viaRoute
         });
         break;
       }
@@ -438,7 +784,9 @@ export class PeerController {
           status: "delivered",
           type: "file",
           file_id: metaPayload.file_id,
-          created_at: Date.now()
+          created_at: Date.now(),
+          route: viaRoute || [msg.sender, this.displayName],
+          relayed_by: relayedBy || null
         };
         this.store.saveMessage(fileMsgRecord);
         this.emitUI("NEW_MESSAGE", fileMsgRecord);
@@ -474,18 +822,9 @@ export class PeerController {
   }
 
   /**
-   * Gửi phản hồi CHAT_ACK cho bên gửi
+   * Gửi phản hồi CHAT_ACK cho bên gửi (Hỗ trợ cả gửi trực tiếp và qua Mesh Relay)
    */
-  private async sendChatAck(targetPeer: string, originalMessageId: string): Promise<void> {
-    let peer = this.onlinePeers.get(targetPeer);
-    if (!peer) {
-      peer = this.dht.getKnownPeers().find((p) => p.displayName === targetPeer);
-    }
-    if (!peer) {
-      peer = this.store.getPeer(targetPeer) || undefined;
-    }
-    if (!peer) return;
-
+  private async sendChatAck(targetPeer: string, originalMessageId: string, preferredRelay?: string): Promise<void> {
     const ackMsg: BaseMessage<ChatAckPayload> = {
       type: MessageType.CHAT_ACK,
       message_id: crypto.randomUUID(),
@@ -498,7 +837,7 @@ export class PeerController {
       mac_or_signature: null
     };
 
-    await this.channel.sendMessage(peer.ip, peer.tcpPort, ackMsg);
+    await this.sendMessageToPeer(targetPeer, ackMsg, preferredRelay);
   }
 
   /**
@@ -529,25 +868,19 @@ export class PeerController {
     this.store.saveMessage(record);
     this.emitUI("NEW_MESSAGE", record);
 
-    // 2. Thử gửi qua TCP tới peer đối tác
+    // 2. Thử gửi (Direct P2P trước, tự động Relay nếu direct lỗi)
     await this.attemptSendMessage(record);
 
     return record;
   }
 
   /**
-   * Thử gửi một tin nhắn đi (hỗ trợ cả tin mới và gửi lại tin pending)
+   * Thử gửi một tin nhắn đi (tự động thử Direct trước, fallback sang Mesh Relay)
    */
   private async attemptSendMessage(record: MessageRecord): Promise<boolean> {
-    let peer = this.onlinePeers.get(record.receiver);
-    if (!peer) {
-      peer = this.dht.getKnownPeers().find((p) => p.displayName === record.receiver);
-      if (peer) {
-        this.onlinePeers.set(peer.displayName, peer);
-      }
-    }
+    const isOnline = this.getOnlinePeers().some((p) => p.displayName === record.receiver);
 
-    if (!peer) {
+    if (!isOnline && !this.simulatedBlockedPeers.has(record.receiver)) {
       this.logger.warn(
         "PROTOCOL",
         `Peer '${record.receiver}' hiện đang offline. Tin nhắn ${record.message_id} lưu trong hàng đợi pending.`
@@ -567,17 +900,24 @@ export class PeerController {
       mac_or_signature: null
     };
 
-    const sent = await this.channel.sendMessage(peer.ip, peer.tcpPort, chatMsg);
-    if (sent) {
-      this.store.updateMessageStatus(record.message_id, "sent");
+    const res = await this.sendMessageToPeer(record.receiver, chatMsg);
+    if (res.success) {
+      this.store.updateMessageStatus(record.message_id, "sent", res.route, res.relayedVia);
       record.status = "sent";
+      record.route = res.route;
+      record.relayed_by = res.relayedVia;
       this.emitUI("MESSAGE_STATUS_UPDATE", {
         message_id: record.message_id,
-        status: "sent"
+        status: "sent",
+        relayed_by: res.relayedVia,
+        route: res.route
       });
       return true;
     } else {
-      this.logger.warn("NETWORK", `Gửi tin ${record.message_id} thất bại. Giữ trạng thái pending.`);
+      this.logger.warn(
+        "ROUTING",
+        `Không thể chuyển phát tin nhắn ${record.message_id} tới '${record.receiver}' (cả Direct và Relay đều thất bại). Giữ trạng thái pending trong hàng đợi.`
+      );
       return false;
     }
   }

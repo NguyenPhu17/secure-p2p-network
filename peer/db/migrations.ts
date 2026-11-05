@@ -36,6 +36,9 @@ export function initDatabase(dbPath: string): DatabaseSync {
   if (currentVersion < 1) {
     runMigrationV1(db);
   }
+  if (currentVersion < 2) {
+    runMigrationV2(db);
+  }
 
   return db;
 }
@@ -75,6 +78,9 @@ function runMigrationV1(db: DatabaseSync): void {
       -- TODO(SECURITY): Cột lưu nonce và chữ ký phục vụ kiểm tra toàn vẹn at-rest
       nonce TEXT,
       mac_or_signature TEXT,
+      -- Định tuyến đa chặng Mesh Relay
+      route TEXT,
+      relayed_by TEXT,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
@@ -99,4 +105,19 @@ function runMigrationV1(db: DatabaseSync): void {
     INSERT INTO schema_version (version, applied_at) VALUES (1, ${Date.now()});
   `);
 }
+
+function runMigrationV2(db: DatabaseSync): void {
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN route TEXT;");
+  } catch (e) {
+    // Đã tồn tại cột (trường hợp tạo mới từ V1)
+  }
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN relayed_by TEXT;");
+  } catch (e) {
+    // Đã tồn tại cột
+  }
+  db.exec(`INSERT INTO schema_version (version, applied_at) VALUES (2, ${Date.now()});`);
+}
+
 

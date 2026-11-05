@@ -25,7 +25,7 @@ interface ProtocolLogsProps {
   channelStatus?: string;
 }
 
-type LogCategoryFilter = "ALL" | "DHT" | "CHAT" | "FILE" | "SECURITY" | "SYSTEM";
+type LogCategoryFilter = "ALL" | "DHT" | "ROUTING" | "CHAT" | "FILE" | "SECURITY" | "SYSTEM";
 
 export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
   logs,
@@ -71,6 +71,16 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
         if (categoryFilter === "DHT") {
           const isDht = type.includes("DHT") || cat.includes("DHT") || sum.includes("DHT");
           if (!isDht) return false;
+        } else if (categoryFilter === "ROUTING") {
+          const isRouting =
+            type.includes("RELAY") ||
+            cat.includes("ROUTING") ||
+            sum.includes("RELAY") ||
+            sum.includes("MESH") ||
+            sum.includes("ĐỊNH TUYẾN") ||
+            sum.includes("DIRECT") ||
+            sum.includes("CHUYỂN TIẾP");
+          if (!isRouting) return false;
         } else if (categoryFilter === "CHAT") {
           const isChatOrAck =
             type.includes("CHAT") ||
@@ -117,7 +127,9 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
     const s = (summary || "").toUpperCase();
 
     let tagColor = "text-[#64748B]";
-    if (t.includes("ACK") || s.includes("ACK")) {
+    if (t.includes("RELAY") || s.includes("RELAY") || s.includes("MESH") || s.includes("CHUYỂN TIẾP")) {
+      tagColor = "text-[#9333EA]";
+    } else if (t.includes("ACK") || s.includes("ACK")) {
       tagColor = "text-[#10B981]";
     } else if (t.includes("DHT") || s.includes("DHT")) {
       tagColor = "text-[#0D9488]";
@@ -252,10 +264,11 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
             {(
               [
                 { id: "ALL", label: "Tất cả" },
-                { id: "DHT", label: "DHT/P2P" },
+                { id: "DHT", label: "DHT" },
+                { id: "ROUTING", label: "Relay Mesh" },
                 { id: "CHAT", label: "Chat/ACK" },
                 { id: "FILE", label: "File" },
-                { id: "SECURITY", label: "Bảo mật/KDC" },
+                { id: "SECURITY", label: "Bảo mật" },
                 { id: "SYSTEM", label: "Hệ thống" },
               ] as const
             ).map((tab) => {

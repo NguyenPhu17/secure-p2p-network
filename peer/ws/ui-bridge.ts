@@ -37,6 +37,7 @@ export class UIBridge {
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
+            blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
           }
@@ -84,6 +85,7 @@ export class UIBridge {
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
+            blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
           }
@@ -121,6 +123,12 @@ export class UIBridge {
       case "DELETE_CHAT_HISTORY": {
         if (!cmd.peer) return;
         this.peerController.deleteChatHistory(cmd.peer);
+        break;
+      }
+
+      case "SIMULATE_BLOCK": {
+        if (!cmd.peer) return;
+        this.peerController.simulateFirewallBlock(cmd.peer, cmd.blocked !== false);
         break;
       }
 

@@ -34,6 +34,10 @@ export enum MessageType {
   // Generic Error
   ERROR = "ERROR",
 
+  // Mesh Overlay & Multi-hop Relay Routing
+  RELAY_FORWARD = "RELAY_FORWARD",
+  RELAY_ACK = "RELAY_ACK",
+
   // Placeholder cho KDC / Security Handshake
   SECURITY_STUB = "SECURITY_STUB"
 }
@@ -186,5 +190,29 @@ export interface DhtFindValueRespPayload {
   value?: any;
   nodes?: PeerInfo[];
 }
+
+// -------------------------------------------------------------
+// PAYLOADS CHO ĐỊNH TUYẾN ĐA CHẶNG (MULTI-HOP OVERLAY MESH RELAY)
+// -------------------------------------------------------------
+
+export interface RelayForwardPayload {
+  relaySessionId: string;       // Định danh duy nhất cho phiên định tuyến đa chặng
+  originSender: string;         // Peer gốc gửi gói tin (VD: "Alice")
+  finalReceiver: string;        // Peer đích nhận cuối cùng (VD: "Bob")
+  hopCount: number;             // Số chặng đã đi qua (bắt đầu từ 1)
+  maxHops: number;              // Giới hạn chặng tối đa (TTL chống loop, mặc định 3 hoặc 5)
+  route: string[];              // Tuyến đường đã đi qua (VD: ["Alice", "Charlie"])
+  innerMessage: BaseMessage;    // Toàn bộ gói tin gốc được đóng gói nguyên vẹn
+}
+
+export interface RelayAckPayload {
+  relaySessionId: string;
+  originSender: string;
+  finalReceiver: string;
+  status: "DELIVERED" | "FORWARDED" | "DROPPED";
+  hopCount: number;
+  reason?: string;
+}
+
 
 

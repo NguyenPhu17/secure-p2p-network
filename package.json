@@ -8,8 +8,8 @@
     "peer": "tsx peer/index.ts",
     "test:dht:unit": "tsx tests/test-dht-unit.ts",
     "test:dht": "tsx tests/test-pure-p2p-dht.ts",
-    "test:mitm": "tsx tests/test-mitm-tamper.ts",
-    "test": "tsx tests/test-pure-p2p-dht.ts"
+    "test:mesh": "tsx tests/test-mesh-relay-routing.ts",
+    "test": "tsx tests/test-mesh-relay-routing.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"

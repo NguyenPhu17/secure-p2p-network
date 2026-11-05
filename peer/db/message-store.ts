@@ -26,6 +26,8 @@ export interface MessageRecord {
   created_at: number;
   nonce?: string | null;
   mac_or_signature?: string | null;
+  route?: string[] | null;       // Tuyến đường Mesh relay (VD: ["Alice", "Charlie", "Bob"])
+  relayed_by?: string | null;    // Peer trung gian chuyển tiếp (VD: "Charlie")
 }
 
 export interface FileRecord {
@@ -83,8 +85,9 @@ export class MessageStore {
     const insertStmt = this.db.prepare(`
       INSERT INTO messages (
         message_id, conversation_id, sender, receiver, direction,
-        seq, timestamp, body, status, type, file_id, created_at, nonce, mac_or_signature
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        seq, timestamp, body, status, type, file_id, created_at, nonce, mac_or_signature,
+        route, relayed_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertStmt.run(
@@ -101,7 +104,9 @@ export class MessageStore {
       msg.file_id || null,
       msg.created_at || Date.now(),
       msg.nonce || null,
-      msg.mac_or_signature || null
+      msg.mac_or_signature || null,
+      msg.route ? JSON.stringify(msg.route) : null,
+      msg.relayed_by || null
     );
 
     // 4. Cập nhật last_message_at của cuộc hội thoại
@@ -111,21 +116,48 @@ export class MessageStore {
     return { isDuplicate: false };
   }
 
+  private mapRowToRecord(row: any): MessageRecord {
+    let route = row.route;
+    if (typeof route === "string") {
+      try {
+        route = JSON.parse(route);
+      } catch (e) {
+        route = null;
+      }
+    }
+    return {
+      ...row,
+      route: Array.isArray(route) ? route : null
+    };
+  }
+
   /**
    * Tìm kiếm 1 message theo ID
    */
   public getMessage(messageId: string): MessageRecord | null {
     const stmt = this.db.prepare("SELECT * FROM messages WHERE message_id = ?");
     const row = stmt.get(messageId) as any;
-    return row ? (row as MessageRecord) : null;
+    return row ? this.mapRowToRecord(row) : null;
   }
 
   /**
    * Cập nhật trạng thái tin nhắn (pending -> sent -> delivered)
    */
-  public updateMessageStatus(messageId: string, status: MessageRecord["status"]): void {
-    const stmt = this.db.prepare("UPDATE messages SET status = ? WHERE message_id = ?");
-    stmt.run(status, messageId);
+  public updateMessageStatus(
+    messageId: string,
+    status: MessageRecord["status"],
+    route?: string[] | null,
+    relayedBy?: string | null
+  ): void {
+    if (route !== undefined || relayedBy !== undefined) {
+      const stmt = this.db.prepare(
+        "UPDATE messages SET status = ?, route = COALESCE(?, route), relayed_by = COALESCE(?, relayed_by) WHERE message_id = ?"
+      );
+      stmt.run(status, route ? JSON.stringify(route) : null, relayedBy || null, messageId);
+    } else {
+      const stmt = this.db.prepare("UPDATE messages SET status = ? WHERE message_id = ?");
+      stmt.run(status, messageId);
+    }
   }
 
   /**
@@ -138,7 +170,8 @@ export class MessageStore {
       WHERE conversation_id = ? AND direction = 'out' AND status = 'pending'
       ORDER BY timestamp ASC, seq ASC
     `);
-    return stmt.all(convId) as any[];
+    const rows = stmt.all(convId) as any[];
+    return rows.map((r) => this.mapRowToRecord(r));
   }
 
   /**
@@ -181,7 +214,7 @@ export class MessageStore {
     }
 
     // Đảo ngược lại theo thứ tự thời gian tăng dần để UI render từ trên xuống dưới
-    return rows.reverse() as MessageRecord[];
+    return rows.reverse().map((r) => this.mapRowToRecord(r));
   }
 
   /**

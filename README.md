@@ -11,6 +11,9 @@ Dự án triển khai theo kiến trúc mạng phân tán Peer-to-Peer (P2P) k�
   - Không gian định danh 160-bit SHA-1, khoảng cách metric XOR \(d(x, y) = x \oplus y\), 160 K-Buckets kết hợp thuật toán trục xuất LRU.
   - Các hàm RPC giao thức: `DHT_PING`, `DHT_PONG`, `DHT_FIND_NODE`, `DHT_FIND_NODE_RESP`, `DHT_STORE`, `DHT_FIND_VALUE`.
   - Cơ chế giám sát sống/chết (Liveness Check) phi tập trung thông qua chu kỳ DHT Ping định kỳ giữa các peer, loại bỏ hoàn toàn Single Point of Failure (SPOF).
+- **Định tuyến Đa chặng Mesh Relay (Multi-hop Overlay Routing)**:
+  - Khi đường truyền trực tiếp giữa Alice và Bob bị lỗi (khác mạng LAN, sau tường lửa/NAT, hoặc rớt mạng cục bộ), hệ thống **tự động kích hoạt cơ chế Mesh Relay** mượn một Peer thứ 3 (như Charlie) chuyển tiếp gói tin.
+  - Đóng gói phong bì `RELAY_FORWARD`, lưu vết tuyến đường `route: ["Alice", "Charlie", "Bob"]`, chống lặp vòng định tuyến (Routing Loop Prevention), giới hạn chặng TTL (`hopCount < maxHops`), và bộ nhớ đệm đảo chiều (Reverse Path Caching) cho phản hồi ACK 2 chiều.
 - **Phần truyền nhận TCP P2P Direct**:
   - Peer Backend mở kết nối TCP Socket thô trực tiếp giữa các Peer, cơ chế Framing 4-bytes Length-prefixed chống vỡ/dính gói tin, chia nhỏ file thành chunk 64KB, hàng đợi tin nhắn offline, chống trùng tin nhắn qua UUID (`message_id`).
 - **Lưu trữ cục bộ**: Mỗi Peer sở hữu database SQLite độc lập (`better-sqlite3` / `node:sqlite`), tối ưu hóa RAM với WAL mode và giới hạn cache 2MB.
@@ -103,14 +106,14 @@ Mở trình duyệt:
 Hệ thống có đầy đủ kịch bản kiểm thử tự động cho mạng Pure P2P DHT và các mốc truyền thống:
 
 ```bash
-# 1. Kiểm thử Toàn diện Mạng Pure P2P DHT Kademlia (Zero SPOF, Seed crash, Liveness pings, File transfer)
+# 1. Kiểm thử Định tuyến Đa chặng Mesh Relay (Tường lửa/NAT, Charlie chuyển tiếp, Chống lặp vòng, TTL, ACK 2 chiều)
+npm run test:mesh
+
+# 2. Kiểm thử Toàn diện Mạng Pure P2P DHT Kademlia (Zero SPOF, Seed crash, Liveness pings, File transfer)
 npm run test:dht
 
-# 2. Kiểm thử Đơn vị (Unit Test) Kademlia Metric 160-bit, XOR Distance, K-Buckets & LRU Eviction
+# 3. Kiểm thử Đơn vị (Unit Test) Kademlia Metric 160-bit, XOR Distance, K-Buckets & LRU Eviction
 npm run test:dht:unit
-
-# 3. Kiểm thử kịch bản Mốc 5 truyền thống (Registry + 3 Peer)
-npm run test:m5
 ```
 
 ---

@@ -21,6 +21,8 @@ export interface MessageRecord {
   created_at: number;
   nonce?: string | null;
   mac_or_signature?: string | null;
+  route?: string[] | null;
+  relayed_by?: string | null;
 }
 
 export interface FileTransferProgress {
