@@ -52,7 +52,17 @@ export function getMailboxKey(recipientName: string): string {
 }
 
 /**
- * Tạo Node ID 160-bit chuẩn Kademlia từ chuỗi định danh (SHA-1)
+ * Tạo Node ID 160-bit chuẩn Kademlia từ Public Key mật mã học (SHA-1)
+ * Chuẩn P2P: Node ID = SHA1(PublicKey) thay vì SHA1(displayName)
+ * để loại bỏ xung đột định danh khi nhiều node trùng tên hiển thị.
+ * Trả về 40 ký tự hex tương đương 160 bits.
+ */
+export function generateNodeIdFromPublicKey(publicKey: string | Buffer): string {
+  return crypto.createHash("sha1").update(publicKey).digest("hex");
+}
+
+/**
+ * Tạo Node ID / Key 160-bit chuẩn Kademlia từ chuỗi định danh (SHA-1)
  * Trả về 40 ký tự hex tương đương 160 bits.
  */
 export function generateNodeId(name: string): string {

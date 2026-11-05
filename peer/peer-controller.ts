@@ -26,18 +26,22 @@ import { Logger } from "../common/logger.js";
 import { config } from "../common/config.js";
 import { FrameDecoder, encodeFrame } from "../common/framing.js";
 import { DhtNode } from "./dht/dht-node.js";
-import { getMailboxKey, MailboxMessage } from "./dht/dht-types.js";
+import { getMailboxKey, MailboxMessage, generateNodeIdFromPublicKey } from "./dht/dht-types.js";
 
 export interface PeerControllerOptions {
   displayName: string;
   tcpPort: number;
   ip?: string;
+  publicKey?: string;
+  privateKey?: string;
+  nodeId?: string;
   registryHost?: string;
   registryPort?: number;
   bootstrapPeers?: Array<{ ip: string; port: number }>;
   discoveryMode?: "dht" | "registry" | "hybrid";
   dbPath?: string;
   downloadDir?: string;
+  partitionHealingIntervalMs?: number;
 }
 
 export type UIEventCallback = (event: string, data: any) => void;
@@ -46,6 +50,9 @@ export class PeerController {
   public readonly displayName: string;
   public readonly tcpPort: number;
   public readonly ip: string;
+  public readonly publicKey: string;
+  private readonly privateKey: string;
+  public readonly nodeId: string;
   public readonly discoveryMode: "dht" | "registry" | "hybrid";
   public readonly bootstrapPeers: Array<{ ip: string; port: number }>;
   private registryHost: string;
@@ -108,6 +115,18 @@ export class PeerController {
     const dbFile = opts.dbPath || `data/${this.displayName}.db`;
     this.store = new MessageStore(dbFile);
 
+    // Khởi tạo hoặc tải danh tính mật mã học (Ed25519 KeyPair & Node ID 160-bit SHA-1)
+    if (opts.publicKey && opts.privateKey) {
+      this.publicKey = opts.publicKey;
+      this.privateKey = opts.privateKey;
+      this.nodeId = opts.nodeId || generateNodeIdFromPublicKey(this.publicKey);
+    } else {
+      const identity = this.store.getOrGenerateIdentity(this.displayName);
+      this.publicKey = identity.publicKey;
+      this.privateKey = identity.privateKey;
+      this.nodeId = identity.nodeId;
+    }
+
     // Giai đoạn 1: Dùng PlainChannel
     // TODO(SECURITY): Giai đoạn 2 thay thế bằng SecureChannel
     this.channel = new PlainChannel(this.ip, this.tcpPort, this.logger);
@@ -130,15 +149,23 @@ export class PeerController {
       displayName: this.displayName,
       ip: this.ip,
       tcpPort: this.tcpPort,
+      publicKey: this.publicKey,
+      nodeId: this.nodeId,
       channel: this.channel,
       logger: this.logger,
-      persistentStore: this.store
+      persistentStore: this.store,
+      bootstrapPeers: this.bootstrapPeers,
+      partitionHealingIntervalMs: opts.partitionHealingIntervalMs
     });
 
     // Lắng nghe sự kiện khám phá peer từ DHT
     this.dht.onPeerJoined((peer) => {
-      if (peer.displayName !== this.displayName) {
-        this.onlinePeers.set(peer.displayName, peer);
+      const isSelf = (peer.nodeId && peer.nodeId.toLowerCase() === this.nodeId.toLowerCase()) ||
+        (peer.ip === this.ip && peer.tcpPort === this.tcpPort);
+      if (!isSelf) {
+        // Nhận diện peer theo nodeId để tránh ghi đè khi 2 người cùng nhập --name Alice
+        const peerKey = peer.nodeId || peer.displayName;
+        this.onlinePeers.set(peerKey, peer);
         this.store.upsertPeer(peer);
         this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
         this.flushPendingMessages(peer.displayName);
@@ -148,7 +175,8 @@ export class PeerController {
     });
 
     this.dht.onPeerLeft((peer) => {
-      this.onlinePeers.delete(peer.displayName);
+      const peerKey = peer.nodeId || peer.displayName;
+      this.onlinePeers.delete(peerKey);
       this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
     });
   }
@@ -385,6 +413,12 @@ export class PeerController {
       this.simulatedBlockedPeers.delete(peerName);
       this.logger.info("ROUTING", `🔓 [FIREWALL SIMULATION] Đã mở lại kết nối trực tiếp với '${peerName}'`);
     }
+
+    const peer = this.resolvePeerContact(peerName);
+    if (peer && (this.channel as any).simulateBlockEndpoint) {
+      (this.channel as any).simulateBlockEndpoint(peer.ip, peer.tcpPort, blocked);
+    }
+
     this.emitUI("FIREWALL_STATUS_UPDATE", { peer: peerName, blocked });
   }
 
@@ -398,18 +432,29 @@ export class PeerController {
 
   /**
    * Tìm kiếm thông tin liên lạc (IP:Port) của một Peer từ RAM, DHT hoặc SQLite
+   * Hỗ trợ tìm kiếm theo cả Node ID (chính xác) và displayName (tên hiển thị)
    */
-  public resolvePeerContact(peerName: string): PeerInfo | null {
-    let peer = this.onlinePeers.get(peerName);
-    if (!peer) {
-      peer = this.dht.getKnownPeers().find((p) => p.displayName === peerName);
-      if (peer) {
-        this.onlinePeers.set(peer.displayName, peer);
+  public resolvePeerContact(target: string): PeerInfo | null {
+    // 1. Thử tìm trực tiếp theo nodeId hoặc key trong onlinePeers
+    let peer = this.onlinePeers.get(target);
+    if (peer) return peer;
+
+    // 2. Thử tìm theo displayName trong onlinePeers
+    for (const p of this.onlinePeers.values()) {
+      if (p.displayName === target) {
+        return p;
       }
     }
-    if (!peer) {
-      peer = this.store.getPeer(peerName) || undefined;
+
+    // 3. Thử tìm trong DHT Routing Table
+    peer = this.dht.getKnownPeers().find((p) => p.nodeId === target || p.displayName === target);
+    if (peer) {
+      this.onlinePeers.set(peer.nodeId || peer.displayName, peer);
+      return peer;
     }
+
+    // 4. Thử tìm trong SQLite store
+    peer = this.store.getPeer(target) || undefined;
     return peer || null;
   }
 
@@ -699,6 +744,11 @@ export class PeerController {
     viaRoute?: string[],
     relayedBy?: string
   ): Promise<void> {
+    // Nếu sender bị chặn đường truyền trực tiếp (Firewall/NAT/phân mảnh) và gói tin KHÔNG đi qua Relay
+    if (!relayedBy && this.simulatedBlockedPeers.has(msg.sender)) {
+      return;
+    }
+
     // 1. Nếu là thông điệp thuộc giao thức DHT Kademlia, chuyển trực tiếp cho DHT Node xử lý
     if (msg.type.startsWith("DHT_")) {
       await this.dht.handleIncomingMessage(msg, from);
@@ -1129,12 +1179,32 @@ export class PeerController {
     if (this.discoveryMode === "dht" || this.onlinePeers.size === 0) {
       const dhtPeers = this.dht.getKnownPeers();
       for (const p of dhtPeers) {
-        if (p.displayName !== this.displayName && !this.onlinePeers.has(p.displayName)) {
-          this.onlinePeers.set(p.displayName, p);
+        const isSelf = (p.nodeId && p.nodeId.toLowerCase() === this.nodeId.toLowerCase()) ||
+          (p.ip === this.ip && p.tcpPort === this.tcpPort);
+        const peerKey = p.nodeId || p.displayName;
+        if (!isSelf && !this.onlinePeers.has(peerKey)) {
+          this.onlinePeers.set(peerKey, p);
         }
       }
     }
     return Array.from(this.onlinePeers.values());
+  }
+
+  public getPublicKey(): string {
+    return this.publicKey;
+  }
+
+  /**
+   * Hàn gắn phân mảnh mạng (Network Partition Healing):
+   * Tái kết nối bootstrap peers và hợp nhất routing table khi đường truyền hồi phục.
+   */
+  public async healPartition(): Promise<boolean> {
+    const healed = await this.dht.healPartition();
+    if (healed) {
+      this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+      await this.checkDistributedMailbox();
+    }
+    return healed;
   }
 
   public getKnownPeers(): PeerInfo[] {

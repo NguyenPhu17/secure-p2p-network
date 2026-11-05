@@ -42,6 +42,9 @@ export function initDatabase(dbPath: string): DatabaseSync {
   if (currentVersion < 3) {
     runMigrationV3(db);
   }
+  if (currentVersion < 4) {
+    runMigrationV4(db);
+  }
 
   return db;
 }
@@ -138,5 +141,33 @@ function runMigrationV3(db: DatabaseSync): void {
     INSERT INTO schema_version (version, applied_at) VALUES (3, ${Date.now()});
   `);
 }
+
+function runMigrationV4(db: DatabaseSync): void {
+  db.exec(`
+    -- Bảng lưu trữ danh tính mật mã học (Ed25519 KeyPair và Node ID SHA-1)
+    CREATE TABLE IF NOT EXISTS node_identity (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      public_key TEXT NOT NULL,
+      private_key TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
+
+  try {
+    db.exec("ALTER TABLE peers ADD COLUMN node_id TEXT;");
+  } catch (e) {
+    // Đã tồn tại cột
+  }
+  try {
+    db.exec("ALTER TABLE peers ADD COLUMN public_key TEXT;");
+  } catch (e) {
+    // Đã tồn tại cột
+  }
+
+  db.exec(`INSERT INTO schema_version (version, applied_at) VALUES (4, ${Date.now()});`);
+}
+
 
 

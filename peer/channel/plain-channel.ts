@@ -18,12 +18,28 @@ export class PlainChannel implements IChannel {
   private activeSockets: Map<string, net.Socket> = new Map();
   // Quản lý các socket kết nối đến để có thể đóng tức thì khi shutdown
   private incomingSockets: Set<net.Socket> = new Set();
+  // Giả lập rớt mạng / firewall theo endpoint: "ip:port"
+  private blockedEndpoints: Set<string> = new Set();
 
   constructor(
     private listenHost: string,
     private listenPort: number,
     private logger: Logger
   ) {}
+
+  public simulateBlockEndpoint(ip: string, port: number, blocked: boolean = true): void {
+    const key = `${ip}:${port}`;
+    if (blocked) {
+      this.blockedEndpoints.add(key);
+      const sock = this.activeSockets.get(key);
+      if (sock) {
+        sock.destroy();
+        this.activeSockets.delete(key);
+      }
+    } else {
+      this.blockedEndpoints.delete(key);
+    }
+  }
 
   public async init(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -70,6 +86,10 @@ export class PlainChannel implements IChannel {
 
   public async sendMessage(targetIp: string, targetPort: number, message: BaseMessage): Promise<boolean> {
     const key = `${targetIp}:${targetPort}`;
+    if (this.blockedEndpoints.has(key)) {
+      return false;
+    }
+
     let socket = this.activeSockets.get(key);
 
     if (!socket || socket.destroyed) {

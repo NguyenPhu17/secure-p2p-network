@@ -50,7 +50,8 @@ export interface PeerInfo {
   ip: string;
   tcpPort: number;
   lastSeen?: number;
-  nodeId?: string; // 160-bit hex ID trong không gian Kademlia DHT
+  nodeId?: string; // 160-bit hex ID trong không gian Kademlia DHT (SHA1(PublicKey))
+  publicKey?: string; // Khóa công khai Ed25519 (PEM/SPKI) phục vụ định danh mật mã học
 }
 
 /**

@@ -9,6 +9,13 @@ Dự án triển khai theo kiến trúc mạng phân tán Peer-to-Peer (P2P) k�
 - **Kiến trúc Phi tập trung hoàn toàn (Pure P2P DHT - Zero SPOF)**:
   - Hệ thống sử dụng bảng băm phân tán **Kademlia DHT** để các peer tự khám phá lẫn nhau mà **không cần bất kỳ Registry trung tâm nào**.
   - Không gian định danh 160-bit SHA-1, khoảng cách metric XOR \(d(x, y) = x \oplus y\), 160 K-Buckets kết hợp thuật toán trục xuất LRU.
+  - **Chuẩn hóa định danh mật mã học (Identity Consensus & Anti Name-Collision)**:
+    - Node ID được sinh từ **`SHA1(PublicKey)`** (cặp khóa Ed25519) thay vì `SHA1(displayName)`.
+    - Khi có nhiều node cùng đặt tên `--name Alice`, mỗi node vẫn sở hữu một Node ID 160-bit duy nhất; bảng K-bucket của các peer khác (như Bob) không bị ghi đè loạn xạ.
+    - Phát hiện xung đột tên trên DHT (`[NAME COLLISION]`) và bảo vệ quyền sở hữu định danh.
+  - **Hàn gắn phân mảnh mạng (Network Partition Healing)**:
+    - Cơ chế định kỳ tự động dò quét và tái kích hoạt bootstrap tới các bootstrap / known peers đã bị rớt kết nối hoặc bị xóa khỏi K-bucket khi mạng bị chia cắt thành 2 nửa cô lập (Partition).
+    - Khi đường truyền vật lý phục hồi, hai nửa mạng **tự động kết nối lại và hợp nhất K-bucket mà không cần khởi động lại bất kỳ node nào**.
   - Các hàm RPC giao thức: `DHT_PING`, `DHT_PONG`, `DHT_FIND_NODE`, `DHT_FIND_NODE_RESP`, `DHT_STORE`, `DHT_FIND_VALUE`.
   - Cơ chế giám sát sống/chết (Liveness Check) phi tập trung thông qua chu kỳ DHT Ping định kỳ giữa các peer, loại bỏ hoàn toàn Single Point of Failure (SPOF).
 - **Định tuyến Đa chặng Mesh Relay (Multi-hop Overlay Routing)**:
@@ -114,6 +121,9 @@ npm run test:dht
 
 # 3. Kiểm thử Đơn vị (Unit Test) Kademlia Metric 160-bit, XOR Distance, K-Buckets & LRU Eviction
 npm run test:dht:unit
+
+# 4. Kiểm thử Xung đột định danh (Name Collision) & Hàn gắn phân mảnh mạng (Network Partition Healing)
+npm run test:healing
 ```
 
 ---

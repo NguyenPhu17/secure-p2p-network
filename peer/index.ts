@@ -59,7 +59,7 @@ async function main() {
   console.log(`   UI WebSocket Port  : ${uiPort}`);
   console.log(`   Discovery Mode     : ${discoveryMode.toUpperCase()}`);
   if (discoveryMode === "dht") {
-    console.log(`   DHT Node ID (SHA-1): ${controller.getNodeId()}`);
+    console.log(`   DHT Node ID (SHA1) : ${controller.getNodeId()} (Derived from Ed25519 PublicKey)`);
     console.log(`   Bootstrap Peers    : ${bootstrapPeers.length > 0 ? bootstrapPeers.map(b => `${b.ip}:${b.port}`).join(", ") : "(None - Seed Node)"}`);
   } else {
     console.log(`   Registry Address   : ${registryHost}:${registryPort}`);

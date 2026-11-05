@@ -10,6 +10,7 @@
     "test:dht": "tsx tests/test-pure-p2p-dht.ts",
     "test:mesh": "tsx tests/test-mesh-relay-routing.ts",
     "test:persistence": "tsx tests/test-dht-persistence-mailbox.ts",
+    "test:healing": "tsx tests/test-partition-healing-identity.ts",
     "test": "tsx tests/test-mesh-relay-routing.ts"
   },
   "dependencies": {

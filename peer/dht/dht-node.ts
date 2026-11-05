@@ -23,6 +23,7 @@ import { Logger } from "../../common/logger.js";
 import {
   DhtContact,
   generateNodeId,
+  generateNodeIdFromPublicKey,
   xorDistance,
   StoredValue,
   IDhtPersistentStore,
@@ -37,12 +38,16 @@ export interface DhtNodeOptions {
   tcpPort: number;
   channel: IChannel;
   logger: Logger;
+  publicKey?: string;
+  nodeId?: string;
   kSize?: number;
   alpha?: number; // Hệ số song song trong iterative lookup (mặc định 3)
   pingIntervalMs?: number; // Chu kỳ ping kiểm tra liveness (mặc định 3000ms)
   rpcTimeoutMs?: number;   // Timeout cho mỗi RPC request (mặc định 2000ms)
   republishIntervalMs?: number; // Chu kỳ Kademlia republishing (mặc định 3600000ms = 1h)
+  partitionHealingIntervalMs?: number; // Chu kỳ tự động hàn gắn phân mảnh mạng (mặc định 5000ms)
   persistentStore?: IDhtPersistentStore; // Lưu trữ bền vững SQLite
+  bootstrapPeers?: Array<{ ip: string; port: number }>;
 }
 
 interface PendingRequest {
@@ -53,6 +58,7 @@ interface PendingRequest {
 
 export class DhtNode {
   public readonly localNodeId: string;
+  public readonly publicKey?: string;
   public readonly localInfo: PeerInfo;
   private channel: IChannel;
   private logger: Logger;
@@ -62,7 +68,10 @@ export class DhtNode {
   private pingIntervalMs: number;
   private rpcTimeoutMs: number;
   private republishIntervalMs: number;
+  private partitionHealingIntervalMs: number;
   private persistentStore?: IDhtPersistentStore;
+  private bootstrapPeers: Array<{ ip: string; port: number }> = [];
+  private knownBootstrapPool: Map<string, { ip: string; port: number }> = new Map();
 
   // Lưu trữ cặp key-value phân tán trên node (L1 Cache)
   private storage: Map<string, StoredValue> = new Map();
@@ -76,16 +85,29 @@ export class DhtNode {
 
   private maintenanceTimer: NodeJS.Timeout | null = null;
   private republishTimer: NodeJS.Timeout | null = null;
+  private healingTimer: NodeJS.Timeout | null = null;
   private isClosing = false;
 
   constructor(opts: DhtNodeOptions) {
-    this.localNodeId = generateNodeId(opts.displayName);
+    this.publicKey = opts.publicKey;
+    if (opts.nodeId) {
+      this.localNodeId = opts.nodeId;
+    } else if (opts.publicKey) {
+      this.localNodeId = generateNodeIdFromPublicKey(opts.publicKey);
+    } else {
+      // Chuẩn P2P: Node ID được sinh từ SHA1(PublicKey) thay vì SHA1(displayName)
+      const { publicKey } = crypto.generateKeyPairSync("ed25519");
+      this.publicKey = publicKey.export({ type: "spki", format: "pem" }).toString();
+      this.localNodeId = generateNodeIdFromPublicKey(this.publicKey);
+    }
+
     this.localInfo = {
       displayName: opts.displayName,
       ip: opts.ip,
       tcpPort: opts.tcpPort,
       lastSeen: Date.now(),
-      nodeId: this.localNodeId
+      nodeId: this.localNodeId,
+      publicKey: this.publicKey
     };
     this.channel = opts.channel;
     this.logger = opts.logger;
@@ -94,7 +116,15 @@ export class DhtNode {
     this.pingIntervalMs = opts.pingIntervalMs || 3000;
     this.rpcTimeoutMs = opts.rpcTimeoutMs || 2000;
     this.republishIntervalMs = opts.republishIntervalMs || 3600000; // Mặc định 1h theo chuẩn Kademlia
+    this.partitionHealingIntervalMs = opts.partitionHealingIntervalMs || 5000; // Mặc định 5s quét hàn gắn phân mảnh
     this.persistentStore = opts.persistentStore;
+
+    if (opts.bootstrapPeers) {
+      this.bootstrapPeers = [...opts.bootstrapPeers];
+      for (const bp of opts.bootstrapPeers) {
+        this.knownBootstrapPool.set(`${bp.ip}:${bp.port}`, { ip: bp.ip, port: bp.port });
+      }
+    }
   }
 
   public onPeerJoined(listener: (peer: PeerInfo) => void): void {
@@ -202,12 +232,23 @@ export class DhtNode {
 
     // 4. Bắt đầu chu trình Kademlia Periodic Republishing
     this.startRepublishLoop();
+
+    // 5. Bắt đầu chu trình tự động hàn gắn phân mảnh mạng (Network Partition Healing)
+    this.startPartitionHealingLoop();
   }
 
   /**
    * Gia nhập mạng DHT thông qua danh sách các Bootstrap Nodes
    */
   public async bootstrap(bootstrapPeers: Array<{ ip: string; port: number }>): Promise<void> {
+    // Lưu lại bootstrap peers và cập nhật vào knownBootstrapPool
+    for (const bp of bootstrapPeers) {
+      if (!this.bootstrapPeers.some((p) => p.ip === bp.ip && p.port === bp.port)) {
+        this.bootstrapPeers.push(bp);
+      }
+      this.knownBootstrapPool.set(`${bp.ip}:${bp.port}`, { ip: bp.ip, port: bp.port });
+    }
+
     if (bootstrapPeers.length === 0) {
       this.logger.info("DHT", "Không có bootstrap peer, node hoạt động như Seed Node khởi nguồn.");
       return;
@@ -295,7 +336,8 @@ export class DhtNode {
             ip: c.ip,
             tcpPort: c.tcpPort,
             lastSeen: c.lastSeen,
-            nodeId: c.nodeId
+            nodeId: c.nodeId,
+            publicKey: c.publicKey
           }));
 
         const respMsg: BaseMessage<DhtFindNodeRespPayload> = {
@@ -448,7 +490,8 @@ export class DhtNode {
               ip: c.ip,
               tcpPort: c.tcpPort,
               lastSeen: c.lastSeen,
-              nodeId: c.nodeId
+              nodeId: c.nodeId,
+              publicKey: c.publicKey
             }))
           };
         }
@@ -491,8 +534,15 @@ export class DhtNode {
    * Thêm hoặc cập nhật một peer vào routing table
    */
   public addOrUpdateContact(peer: PeerInfo): void {
-    if (!peer.displayName || peer.displayName === this.localInfo.displayName) return;
-    const nodeId = peer.nodeId || generateNodeId(peer.displayName);
+    if (!peer.displayName) return;
+    
+    // Chuẩn P2P: Node ID được sinh từ SHA1(PublicKey) thay vì SHA1(displayName)
+    const nodeId = peer.nodeId || (peer.publicKey ? generateNodeIdFromPublicKey(peer.publicKey) : generateNodeId(peer.displayName));
+
+    // Không thêm chính bản thân mình vào routing table (kiểm tra theo nodeId hoặc cặp IP:Port)
+    const isSelf = nodeId.toLowerCase() === this.localNodeId.toLowerCase() ||
+      (peer.ip === this.localInfo.ip && peer.tcpPort === this.localInfo.tcpPort);
+    if (isSelf) return;
 
     const contact: DhtContact = {
       nodeId,
@@ -500,8 +550,12 @@ export class DhtNode {
       ip: peer.ip,
       tcpPort: peer.tcpPort,
       lastSeen: Date.now(),
-      failedPings: 0
+      failedPings: 0,
+      publicKey: peer.publicKey
     };
+
+    // Ghi nhận vào pool known bootstrap để phục vụ tự động hàn gắn phân mảnh mạng
+    this.knownBootstrapPool.set(`${peer.ip}:${peer.tcpPort}`, { ip: peer.ip, port: peer.tcpPort });
 
     const isExisting = !!this.routingTable.get(nodeId);
     const result = this.routingTable.addOrUpdate(contact);
@@ -516,7 +570,8 @@ export class DhtNode {
         ip: peer.ip,
         tcpPort: peer.tcpPort,
         lastSeen: Date.now(),
-        nodeId
+        nodeId,
+        publicKey: peer.publicKey
       });
     }
 
@@ -627,8 +682,8 @@ export class DhtNode {
       let foundNewNode = false;
       for (const nodes of results) {
         for (const peer of nodes) {
-          const pNodeId = peer.nodeId || generateNodeId(peer.displayName);
-          if (pNodeId.toLowerCase() === this.localNodeId) continue;
+          const pNodeId = peer.nodeId || (peer.publicKey ? generateNodeIdFromPublicKey(peer.publicKey) : generateNodeId(peer.displayName));
+          if (pNodeId.toLowerCase() === this.localNodeId.toLowerCase()) continue;
 
           this.addOrUpdateContact(peer);
 
@@ -641,7 +696,8 @@ export class DhtNode {
               ip: peer.ip,
               tcpPort: peer.tcpPort,
               lastSeen: Date.now(),
-              failedPings: 0
+              failedPings: 0,
+              publicKey: peer.publicKey
             });
           }
         }
@@ -920,12 +976,27 @@ export class DhtNode {
    * Tự quảng bá sự hiện diện của mình lên mạng DHT
    */
   public async announceSelf(): Promise<void> {
-    // 1. Lưu thông tin dưới key là localNodeId
+    // 1. Lưu thông tin dưới key là localNodeId (bảo toàn định danh mật mã học SHA1(PublicKey))
     await this.store(this.localNodeId, this.localInfo, 3600000);
-    // 2. Lưu thông tin dưới key là SHA-1(displayName)
+
+    // 2. Lưu thông tin dưới key là SHA-1(displayName) để hỗ trợ tìm kiếm theo tên
     const nameKey = generateNodeId(this.localInfo.displayName);
     if (nameKey !== this.localNodeId) {
-      await this.store(nameKey, this.localInfo, 3600000);
+      // Identity Consensus: Kiểm tra xung đột tên (Name Collision)
+      const existing = await this.findValue(nameKey);
+      if (
+        existing.found &&
+        existing.value &&
+        existing.value.nodeId &&
+        existing.value.nodeId.toLowerCase() !== this.localNodeId.toLowerCase()
+      ) {
+        this.logger.warn(
+          "DHT",
+          `⚠️ [NAME COLLISION] Phát hiện xung đột tên: Tên hiển thị '${this.localInfo.displayName}' đã được sử dụng bởi Node ID ${existing.value.nodeId.substring(0, 8)}... Nhờ chuẩn Node ID = SHA1(PublicKey), bảng K-bucket không bị ghi đè.`
+        );
+      } else {
+        await this.store(nameKey, this.localInfo, 3600000);
+      }
     }
   }
 
@@ -1007,8 +1078,88 @@ export class DhtNode {
       ip: c.ip,
       tcpPort: c.tcpPort,
       lastSeen: c.lastSeen,
-      nodeId: c.nodeId
+      nodeId: c.nodeId,
+      publicKey: c.publicKey
     }));
+  }
+
+  /**
+   * Hàn gắn phân mảnh mạng (Network Partition Healing):
+   * Định kỳ quét các bootstrap peers và historical known nodes bị mất kết nối (bị xóa khỏi K-bucket).
+   * Khi đường truyền phục hồi, tự động ping tái kết nối, hợp nhất routing table và kéo lại dữ liệu.
+   */
+  public async healPartition(): Promise<boolean> {
+    if (this.isClosing) return false;
+
+    const activeContacts = this.routingTable.getAll();
+    const missingCandidates: Array<{ ip: string; port: number }> = [];
+
+    // 1. Kiểm tra bootstrap peers được cấu hình ban đầu
+    for (const bp of this.bootstrapPeers) {
+      if (bp.ip === this.localInfo.ip && bp.port === this.localInfo.tcpPort) continue;
+      const isActive = activeContacts.some((c) => c.ip === bp.ip && c.tcpPort === bp.port);
+      if (!isActive) {
+        missingCandidates.push(bp);
+      }
+    }
+
+    // 2. Kiểm tra known peers trong pool lịch sử (cho phép seed node cũng hàn gắn được)
+    for (const kp of this.knownBootstrapPool.values()) {
+      if (kp.ip === this.localInfo.ip && kp.port === this.localInfo.tcpPort) continue;
+      const isActive = activeContacts.some((c) => c.ip === kp.ip && c.tcpPort === kp.port);
+      const isAlready = missingCandidates.some((m) => m.ip === kp.ip && m.port === kp.port);
+      if (!isActive && !isAlready) {
+        missingCandidates.push(kp);
+      }
+    }
+
+    if (missingCandidates.length === 0) {
+      return false;
+    }
+
+    let healedCount = 0;
+    for (const candidate of missingCandidates) {
+      if (this.isClosing) break;
+
+      const pong = await this.sendPing(candidate.ip, candidate.port);
+      if (pong) {
+        this.logger.info(
+          "DHT",
+          `🩹 [PARTITION HEALING] Tái kết nối thành công với peer '${candidate.ip}:${candidate.port}' (${pong.displayName}). Đang hàn gắn 2 nửa mạng...`
+        );
+        this.addOrUpdateContact(pong);
+        healedCount++;
+
+        // Kích hoạt lại Iterative Lookup để khám phá lại toàn bộ các node thuộc phân vùng bên kia
+        await this.iterativeFindNode(this.localNodeId);
+
+        // Tự quảng bá lại thông tin của mình sang nửa mạng vừa được kết nối
+        await this.announceSelf();
+      }
+    }
+
+    if (healedCount > 0) {
+      this.logger.info(
+        "DHT",
+        `✅ [PARTITION HEALED] Phân mảnh mạng đã được hàn gắn thành công! Bảng định tuyến K-bucket hiện có ${this.routingTable.size()} node.`
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  private startPartitionHealingLoop(): void {
+    if (this.healingTimer) clearInterval(this.healingTimer);
+
+    this.healingTimer = setInterval(async () => {
+      if (this.isClosing) return;
+      try {
+        await this.healPartition();
+      } catch (err: any) {
+        // Tránh unhandled rejection trong background interval
+      }
+    }, this.partitionHealingIntervalMs);
   }
 
   public async close(): Promise<void> {
@@ -1020,6 +1171,10 @@ export class DhtNode {
     if (this.republishTimer) {
       clearInterval(this.republishTimer);
       this.republishTimer = null;
+    }
+    if (this.healingTimer) {
+      clearInterval(this.healingTimer);
+      this.healingTimer = null;
     }
 
     // Hủy toàn bộ pending RPCs

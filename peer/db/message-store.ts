@@ -7,10 +7,11 @@
  * 2. Lưu trữ và xác thực trường `nonce` và `mac_or_signature` khi đọc/ghi tin nhắn.
  */
 
+import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { initDatabase } from "./migrations.js";
 import { PeerInfo } from "../../common/protocol.js";
-import { IDhtPersistentStore, StoredValue } from "../dht/dht-types.js";
+import { IDhtPersistentStore, StoredValue, generateNodeIdFromPublicKey } from "../dht/dht-types.js";
 
 export interface MessageRecord {
   message_id: string;
@@ -236,25 +237,72 @@ export class MessageStore implements IDhtPersistentStore {
    */
   public upsertPeer(peer: PeerInfo): void {
     const stmt = this.db.prepare(`
-      INSERT INTO peers (peer_name, last_ip, last_port, last_seen)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO peers (peer_name, last_ip, last_port, last_seen, node_id, public_key)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(peer_name) DO UPDATE SET
         last_ip = excluded.last_ip,
         last_port = excluded.last_port,
-        last_seen = excluded.last_seen
+        last_seen = excluded.last_seen,
+        node_id = COALESCE(excluded.node_id, peers.node_id),
+        public_key = COALESCE(excluded.public_key, peers.public_key)
     `);
-    stmt.run(peer.displayName, peer.ip, peer.tcpPort, peer.lastSeen || Date.now());
+    stmt.run(
+      peer.displayName,
+      peer.ip,
+      peer.tcpPort,
+      peer.lastSeen || Date.now(),
+      peer.nodeId || null,
+      peer.publicKey || null
+    );
   }
 
   public getKnownPeers(): PeerInfo[] {
-    const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen FROM peers");
+    const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen, node_id as nodeId, public_key as publicKey FROM peers");
     return stmt.all() as any[];
   }
 
   public getPeer(peerName: string): PeerInfo | null {
-    const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen FROM peers WHERE peer_name = ?");
+    const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen, node_id as nodeId, public_key as publicKey FROM peers WHERE peer_name = ?");
     const row = stmt.get(peerName) as any;
     return row || null;
+  }
+
+  /**
+   * Lấy hoặc tạo mới danh tính mật mã học (Ed25519 KeyPair & Node ID 160-bit SHA-1)
+   * Chuẩn P2P: Node ID = SHA1(PublicKey) thay vì SHA1(displayName)
+   * Giúp bảo toàn danh tính qua các lần khởi động và ngăn chặn xung đột định danh trong K-bucket.
+   */
+  public getOrGenerateIdentity(displayName: string): { publicKey: string; privateKey: string; nodeId: string } {
+    try {
+      const query = this.db.prepare("SELECT public_key, private_key, node_id FROM node_identity LIMIT 1");
+      const row = query.get() as { public_key: string; private_key: string; node_id: string } | undefined;
+
+      if (row && row.public_key && row.private_key && row.node_id) {
+        return {
+          publicKey: row.public_key,
+          privateKey: row.private_key,
+          nodeId: row.node_id
+        };
+      }
+    } catch {
+      // Bảng có thể chưa tạo nếu DB in-memory đặc biệt
+    }
+
+    // Tạo mới cặp khóa mật mã học Ed25519
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+    const pubPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    const privPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const nodeId = generateNodeIdFromPublicKey(pubPem);
+
+    try {
+      const insert = this.db.prepare(`
+        INSERT INTO node_identity (id, display_name, public_key, private_key, node_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      insert.run(crypto.randomUUID(), displayName, pubPem, privPem, nodeId, Date.now());
+    } catch {}
+
+    return { publicKey: pubPem, privateKey: privPem, nodeId };
   }
 
   /**
