@@ -1,3 +1,19 @@
+import {
+  LamportClock,
+  VectorClock,
+  compareLamportOrder,
+  type VectorClockMap,
+  type CausalMessageComparable
+} from "./logical-clock.js";
+
+export {
+  LamportClock,
+  VectorClock,
+  compareLamportOrder,
+  type VectorClockMap,
+  type CausalMessageComparable
+};
+
 /**
  * Giao thức truyền thông cốt lõi giữa các thành phần (Registry, Peer, Channel)
  * Toàn bộ tin nhắn trao đổi qua mạng TCP đều tuân theo chuẩn BaseMessage.
@@ -65,7 +81,9 @@ export interface BaseMessage<T = any> {
   sender: string;            // Tên người gửi
   receiver: string;          // Tên người nhận ("REGISTRY", "BROADCAST", hoặc tên peer đối phương)
   seq: number;               // Số thứ tự gói tin giữa 2 thực thể
-  timestamp: number;         // Unix timestamp (ms)
+  timestamp: number;         // Unix timestamp (ms) - Physical Clock
+  lamport_clock?: number;    // Leslie Lamport Logical Clock (1978) - Theo dõi tính nhân quả (Causality)
+  vector_clock?: VectorClockMap; // Vector Clock - Theo dõi quan hệ Happened-Before và sự kiện đồng thời
   payload: T;                // Dữ liệu nghiệp vụ chi tiết
 
   // ==========================================
@@ -171,6 +189,8 @@ export interface DhtStorePayload {
   ttlMs?: number;
   publisher: string;
   publisherNodeId: string;
+  lamport_clock?: number;
+  version?: number;
 }
 
 export interface DhtStoreAckPayload {

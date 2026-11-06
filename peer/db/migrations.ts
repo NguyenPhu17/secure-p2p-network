@@ -45,6 +45,9 @@ export function initDatabase(dbPath: string): DatabaseSync {
   if (currentVersion < 4) {
     runMigrationV4(db);
   }
+  if (currentVersion < 5) {
+    runMigrationV5(db);
+  }
 
   return db;
 }
@@ -87,6 +90,9 @@ function runMigrationV1(db: DatabaseSync): void {
       -- Định tuyến đa chặng Mesh Relay
       route TEXT,
       relayed_by TEXT,
+      -- Leslie Lamport Logical Clock & Vector Clock (Thứ tự sự kiện & Nhân quả phân tán)
+      lamport_clock INTEGER DEFAULT 0,
+      vector_clock TEXT,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
 
@@ -102,6 +108,13 @@ function runMigrationV1(db: DatabaseSync): void {
       direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
       created_at INTEGER NOT NULL,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    -- Bảng lưu trữ trạng thái node (Lamport Clock, Sequence...)
+    CREATE TABLE IF NOT EXISTS node_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
     );
 
     -- Chỉ mục tối ưu tải lịch sử tin nhắn phân trang cuộn lên
@@ -167,6 +180,43 @@ function runMigrationV4(db: DatabaseSync): void {
   }
 
   db.exec(`INSERT INTO schema_version (version, applied_at) VALUES (4, ${Date.now()});`);
+}
+
+function runMigrationV5(db: DatabaseSync): void {
+  // Thêm cột Lamport Clock và Vector Clock cho messages nếu đã tạo DB từ trước V5
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN lamport_clock INTEGER DEFAULT 0;");
+  } catch (e) {}
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN vector_clock TEXT;");
+  } catch (e) {}
+  try {
+    db.exec("ALTER TABLE dht_storage ADD COLUMN lamport_clock INTEGER DEFAULT 0;");
+  } catch (e) {}
+  try {
+    db.exec("ALTER TABLE dht_storage ADD COLUMN version INTEGER DEFAULT 1;");
+  } catch (e) {}
+
+  // Tạo chỉ mục tối ưu hóa truy vấn lịch sử theo thứ tự nhân quả Lamport
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_causal 
+        ON messages(conversation_id, lamport_clock DESC, seq DESC);
+    `);
+  } catch (e) {}
+
+  // Bảng lưu trữ trạng thái node (bao gồm Lamport Clock hiện tại)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS node_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  } catch (e) {}
+
+  db.exec(`INSERT INTO schema_version (version, applied_at) VALUES (5, ${Date.now()});`);
 }
 
 

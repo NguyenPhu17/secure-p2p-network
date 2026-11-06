@@ -108,7 +108,8 @@ export class UIBridge {
       case "GET_CHAT_HISTORY": {
         if (!cmd.peer) return;
         const limit = cmd.limit || 50;
-        const messages = this.peerController.getChatHistory(cmd.peer, limit, cmd.beforeTimestamp);
+        const before = cmd.beforeLamportClock !== undefined ? cmd.beforeLamportClock : cmd.beforeTimestamp;
+        const messages = this.peerController.getChatHistory(cmd.peer, limit, before);
         this.sendToClient(ws, {
           event: "CHAT_HISTORY",
           data: {

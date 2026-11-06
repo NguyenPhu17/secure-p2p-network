@@ -21,6 +21,8 @@ export interface MessageRecord {
   direction: "in" | "out";
   seq: number;
   timestamp: number;
+  lamport_clock?: number;        // Leslie Lamport Logical Clock (1978)
+  vector_clock?: Record<string, number> | null; // Vector Clock theo dõi quan hệ Happened-Before
   body: string;
   status: "pending" | "sent" | "delivered" | "failed";
   type: "chat" | "file";
@@ -88,8 +90,8 @@ export class MessageStore implements IDhtPersistentStore {
       INSERT INTO messages (
         message_id, conversation_id, sender, receiver, direction,
         seq, timestamp, body, status, type, file_id, created_at, nonce, mac_or_signature,
-        route, relayed_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        route, relayed_by, lamport_clock, vector_clock
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertStmt.run(
@@ -108,7 +110,9 @@ export class MessageStore implements IDhtPersistentStore {
       msg.nonce || null,
       msg.mac_or_signature || null,
       msg.route ? JSON.stringify(msg.route) : null,
-      msg.relayed_by || null
+      msg.relayed_by || null,
+      msg.lamport_clock || 0,
+      msg.vector_clock ? JSON.stringify(msg.vector_clock) : null
     );
 
     // 4. Cập nhật last_message_at của cuộc hội thoại
@@ -127,9 +131,19 @@ export class MessageStore implements IDhtPersistentStore {
         route = null;
       }
     }
+    let vector_clock = row.vector_clock;
+    if (typeof vector_clock === "string") {
+      try {
+        vector_clock = JSON.parse(vector_clock);
+      } catch (e) {
+        vector_clock = null;
+      }
+    }
     return {
       ...row,
-      route: Array.isArray(route) ? route : null
+      route: Array.isArray(route) ? route : null,
+      lamport_clock: row.lamport_clock !== undefined && row.lamport_clock !== null ? Number(row.lamport_clock) : 0,
+      vector_clock: vector_clock && typeof vector_clock === "object" ? vector_clock : null
     };
   }
 
@@ -170,7 +184,7 @@ export class MessageStore implements IDhtPersistentStore {
     const stmt = this.db.prepare(`
       SELECT * FROM messages
       WHERE conversation_id = ? AND direction = 'out' AND status = 'pending'
-      ORDER BY timestamp ASC, seq ASC
+      ORDER BY lamport_clock ASC, seq ASC, timestamp ASC
     `);
     const rows = stmt.all(convId) as any[];
     return rows.map((r) => this.mapRowToRecord(r));
@@ -189,27 +203,82 @@ export class MessageStore implements IDhtPersistentStore {
   }
 
   /**
-   * Lấy lịch sử tin nhắn phân trang (Tối ưu RAM: mặc định 50 tin)
-   * Phục vụ tính năng cuộn lên đầu để tải thêm tin cũ
+   * Lấy giá trị Lamport Clock lớn nhất từng được lưu trong DB
+   * Phục vụ khôi phục trạng thái đồng hồ logic khi node khởi động lại
    */
-  public getHistory(peerName: string, limit = 50, beforeTimestamp?: number): MessageRecord[] {
+  public getMaxLamportClock(): number {
+    const stmt = this.db.prepare("SELECT MAX(lamport_clock) as maxClock FROM messages");
+    const row = stmt.get() as any;
+    return row && row.maxClock ? Number(row.maxClock) : 0;
+  }
+
+  /**
+   * Lưu giá trị Lamport Clock hiện tại vào bảng node_state
+   */
+  public saveLamportClock(clock: number): void {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO node_state (key, value, updated_at)
+        VALUES ('lamport_clock', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `);
+      stmt.run(String(clock), Date.now());
+    } catch {}
+  }
+
+  /**
+   * Lấy giá trị Lamport Clock đã lưu (kết hợp node_state và MAX messages)
+   */
+  public getSavedLamportClock(): number {
+    let fromState = 0;
+    try {
+      const stmt = this.db.prepare("SELECT value FROM node_state WHERE key = 'lamport_clock'");
+      const row = stmt.get() as any;
+      if (row && row.value) {
+        fromState = Number(row.value) || 0;
+      }
+    } catch {}
+    const fromMessages = this.getMaxLamportClock();
+    return Math.max(fromState, fromMessages);
+  }
+
+  /**
+   * Lấy lịch sử tin nhắn phân trang (Tối ưu RAM: mặc định 50 tin)
+   * Sắp xếp theo Lamport Total Order (Thứ tự nhân quả):
+   * ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
+   */
+  public getHistory(peerName: string, limit = 50, beforeClockOrTimestamp?: number): MessageRecord[] {
     const convId = `conv_${peerName}`;
     let stmt;
     let rows: any[];
 
-    if (beforeTimestamp) {
-      stmt = this.db.prepare(`
-        SELECT * FROM messages
-        WHERE conversation_id = ? AND timestamp < ?
-        ORDER BY timestamp DESC, seq DESC
-        LIMIT ?
-      `);
-      rows = stmt.all(convId, beforeTimestamp, limit);
+    if (beforeClockOrTimestamp) {
+      // Nếu tham số truyền vào là timestamp lớn (ví dụ > 1,000,000,000,000 ms của Date.now())
+      if (beforeClockOrTimestamp > 1000000000000) {
+        stmt = this.db.prepare(`
+          SELECT * FROM messages
+          WHERE conversation_id = ? AND timestamp < ?
+          ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
+          LIMIT ?
+        `);
+        rows = stmt.all(convId, beforeClockOrTimestamp, limit);
+      } else {
+        // Tham số là Lamport Clock
+        stmt = this.db.prepare(`
+          SELECT * FROM messages
+          WHERE conversation_id = ? AND lamport_clock < ?
+          ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
+          LIMIT ?
+        `);
+        rows = stmt.all(convId, beforeClockOrTimestamp, limit);
+      }
     } else {
       stmt = this.db.prepare(`
         SELECT * FROM messages
         WHERE conversation_id = ?
-        ORDER BY timestamp DESC, seq DESC
+        ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
         LIMIT ?
       `);
       rows = stmt.all(convId, limit);
@@ -348,24 +417,51 @@ export class MessageStore implements IDhtPersistentStore {
    */
 
   /**
-   * Lưu trữ hoặc cập nhật một cặp Key-Value DHT vào SQLite
+   * Lưu trữ hoặc cập nhật một cặp Key-Value DHT vào SQLite.
+   * Phân giải xung đột ghi đè dựa trên Lamport Logical Clock & Version (thay vì phụ thuộc Date.now()).
    */
   public saveDhtRecord(
     key: string,
     value: any,
     expiresAt: number,
     publisher: string,
-    isLocalPublished = false
+    isLocalPublished = false,
+    lamportClock = 0,
+    version = 1
   ): void {
+    // Kiểm tra bản ghi hiện có để phân giải xung đột nhân quả (Causality Conflict Resolution)
+    const checkStmt = this.db.prepare("SELECT lamport_clock, version, publisher FROM dht_storage WHERE key = ?");
+    const existing = checkStmt.get(key) as any;
+
+    if (existing && existing.lamport_clock !== undefined && existing.lamport_clock !== null) {
+      const existingClock = Number(existing.lamport_clock) || 0;
+      // Nếu bản ghi đến có Lamport clock nhỏ hơn bản ghi hiện có -> Bản ghi cũ, không ghi đè
+      if (lamportClock > 0 && lamportClock < existingClock) {
+        return;
+      }
+      // Nếu Lamport clock bằng nhau, tie-breaker bằng phiên bản version hoặc định danh publisher
+      if (lamportClock > 0 && lamportClock === existingClock) {
+        const existingVer = Number(existing.version) || 1;
+        if (version < existingVer) {
+          return;
+        }
+        if (version === existingVer && publisher < (existing.publisher || "")) {
+          return;
+        }
+      }
+    }
+
     const stmt = this.db.prepare(`
-      INSERT INTO dht_storage (key, value, expires_at, publisher, is_local_published, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO dht_storage (key, value, expires_at, publisher, is_local_published, updated_at, lamport_clock, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET
         value = excluded.value,
         expires_at = excluded.expires_at,
         publisher = excluded.publisher,
         is_local_published = excluded.is_local_published,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        lamport_clock = excluded.lamport_clock,
+        version = excluded.version
     `);
     stmt.run(
       key,
@@ -373,7 +469,9 @@ export class MessageStore implements IDhtPersistentStore {
       expiresAt,
       publisher,
       isLocalPublished ? 1 : 0,
-      Date.now()
+      Date.now(),
+      lamportClock,
+      version
     );
   }
 
@@ -389,7 +487,9 @@ export class MessageStore implements IDhtPersistentStore {
         value: JSON.parse(row.value),
         expiresAt: row.expires_at,
         publisher: row.publisher,
-        isLocalPublished: row.is_local_published === 1
+        isLocalPublished: row.is_local_published === 1,
+        lamport_clock: row.lamport_clock !== undefined && row.lamport_clock !== null ? Number(row.lamport_clock) : 0,
+        version: row.version !== undefined && row.version !== null ? Number(row.version) : 1
       };
     } catch {
       return null;

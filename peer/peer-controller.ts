@@ -15,7 +15,10 @@ import {
   ChatAckPayload,
   PeerLeftPayload,
   RelayForwardPayload,
-  RelayAckPayload
+  RelayAckPayload,
+  LamportClock,
+  VectorClock,
+  type VectorClockMap
 } from "../common/protocol.js";
 import { IChannel } from "../common/channel.js";
 import { PlainChannel } from "./channel/plain-channel.js";
@@ -86,6 +89,10 @@ export class PeerController {
   private mailboxPollTimer: NodeJS.Timeout | null = null;
   private isClosing = false;
 
+  // Leslie Lamport Logical Clock & Vector Clock (Thứ tự sự kiện và Tính nhân quả)
+  public readonly lamportClock: LamportClock;
+  public readonly vectorClock: VectorClock;
+
   constructor(opts: PeerControllerOptions) {
     this.displayName = opts.displayName;
     this.tcpPort = opts.tcpPort;
@@ -114,6 +121,11 @@ export class PeerController {
 
     const dbFile = opts.dbPath || `data/${this.displayName}.db`;
     this.store = new MessageStore(dbFile);
+
+    // Khôi phục Lamport Logical Clock từ SQLite DB để đảm bảo tính đơn điệu (Monotonicity)
+    const maxClock = this.store.getSavedLamportClock();
+    this.lamportClock = new LamportClock(maxClock);
+    this.vectorClock = new VectorClock({ [this.displayName]: maxClock });
 
     // Khởi tạo hoặc tải danh tính mật mã học (Ed25519 KeyPair & Node ID 160-bit SHA-1)
     if (opts.publicKey && opts.privateKey) {
@@ -506,6 +518,14 @@ export class PeerController {
       return { success: false };
     }
 
+    // Đảm bảo thông điệp luôn mang Lamport Logical Clock & Vector Clock theo dõi nhân quả
+    if (message.lamport_clock === undefined || message.lamport_clock === null) {
+      message.lamport_clock = this.lamportClock.tick();
+    }
+    if (!message.vector_clock) {
+      message.vector_clock = this.vectorClock.tick(this.displayName);
+    }
+
     // 1. KIỂM TRA ĐƯỜNG TRUYỀN TRỰC TIẾP (1-HOP DIRECT SOCKET)
     const isDirectBlocked = this.simulatedBlockedPeers.has(targetPeerName);
 
@@ -761,9 +781,17 @@ export class PeerController {
       return;
     }
 
+    // Cập nhật Lamport Logical Clock & Vector Clock từ thông điệp nhận được
+    if (msg.lamport_clock !== undefined && msg.lamport_clock !== null) {
+      this.lamportClock.update(msg.lamport_clock);
+    } else {
+      this.lamportClock.tick();
+    }
+    this.vectorClock.update(msg.vector_clock, this.displayName);
+
     this.logger.info(
       "PROTOCOL",
-      `Nhận [${msg.type}] từ peer '${msg.sender}' (seq: ${msg.seq})${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}`,
+      `Nhận [${msg.type}] từ peer '${msg.sender}' (seq: ${msg.seq}, Lamport: L${msg.lamport_clock ?? 0})${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}`,
       msg.payload,
       { direction: "IN", messageType: msg.type, peer: msg.sender }
     );
@@ -771,6 +799,10 @@ export class PeerController {
     switch (msg.type) {
       case MessageType.CHAT: {
         const payload = msg.payload as ChatPayload;
+        const recordClock = msg.lamport_clock !== undefined && msg.lamport_clock !== null
+          ? msg.lamport_clock
+          : this.lamportClock.getClock();
+
         const record: MessageRecord = {
           message_id: msg.message_id,
           conversation_id: `conv_${msg.sender}`,
@@ -779,6 +811,8 @@ export class PeerController {
           direction: "in",
           seq: msg.seq,
           timestamp: msg.timestamp,
+          lamport_clock: recordClock,
+          vector_clock: msg.vector_clock || null,
           body: payload.body,
           status: "delivered",
           type: "chat",
@@ -845,6 +879,10 @@ export class PeerController {
         });
 
         // Tạo tin nhắn thông báo file trong cuộc hội thoại
+        const recordClock = msg.lamport_clock !== undefined && msg.lamport_clock !== null
+          ? msg.lamport_clock
+          : this.lamportClock.getClock();
+
         const fileMsgRecord: MessageRecord = {
           message_id: crypto.randomUUID(),
           conversation_id: `conv_${msg.sender}`,
@@ -853,6 +891,8 @@ export class PeerController {
           direction: "in",
           seq: msg.seq,
           timestamp: msg.timestamp,
+          lamport_clock: recordClock,
+          vector_clock: msg.vector_clock || null,
           body: `[File đính kèm: ${metaPayload.fileName} (${(metaPayload.fileSize / 1024).toFixed(1)} KB)]`,
           status: "delivered",
           type: "file",
@@ -899,6 +939,9 @@ export class PeerController {
    * Gửi phản hồi CHAT_ACK cho bên gửi (Hỗ trợ cả gửi trực tiếp và qua Mesh Relay)
    */
   private async sendChatAck(targetPeer: string, originalMessageId: string, preferredRelay?: string): Promise<void> {
+    const ackClock = this.lamportClock.tick();
+    const ackVector = this.vectorClock.tick(this.displayName);
+
     const ackMsg: BaseMessage<ChatAckPayload> = {
       type: MessageType.CHAT_ACK,
       message_id: crypto.randomUUID(),
@@ -906,6 +949,8 @@ export class PeerController {
       receiver: targetPeer,
       seq: 0,
       timestamp: Date.now(),
+      lamport_clock: ackClock,
+      vector_clock: ackVector,
       payload: { ack_message_id: originalMessageId },
       nonce: null,
       mac_or_signature: null
@@ -921,6 +966,8 @@ export class PeerController {
     const message_id = crypto.randomUUID();
     const now = Date.now();
     const seq = this.store.getNextSeq(receiver);
+    const clock = this.lamportClock.tick();
+    const vclock = this.vectorClock.tick(this.displayName);
 
     const record: MessageRecord = {
       message_id,
@@ -930,6 +977,8 @@ export class PeerController {
       direction: "out",
       seq,
       timestamp: now,
+      lamport_clock: clock,
+      vector_clock: vclock,
       body,
       status: "pending",
       type: "chat",
@@ -971,6 +1020,8 @@ export class PeerController {
       receiver: record.receiver,
       seq: record.seq,
       timestamp: record.timestamp,
+      lamport_clock: record.lamport_clock,
+      vector_clock: record.vector_clock || undefined,
       payload: { body: record.body },
       nonce: null,
       mac_or_signature: null
@@ -1015,6 +1066,8 @@ export class PeerController {
       sender: record.sender,
       receiver: record.receiver,
       timestamp: record.timestamp,
+      lamport_clock: record.lamport_clock,
+      vector_clock: record.vector_clock || undefined,
       body: record.body,
       seq: record.seq,
       nonce: record.nonce,
@@ -1063,6 +1116,13 @@ export class PeerController {
 
       let newCount = 0;
       for (const msg of messages) {
+        if (msg.lamport_clock !== undefined && msg.lamport_clock !== null) {
+          this.lamportClock.update(msg.lamport_clock);
+        } else {
+          this.lamportClock.tick();
+        }
+        this.vectorClock.update(msg.vector_clock, this.displayName);
+
         const record: MessageRecord = {
           message_id: msg.message_id,
           conversation_id: `conv_${msg.sender}`,
@@ -1071,6 +1131,8 @@ export class PeerController {
           direction: "in",
           seq: msg.seq,
           timestamp: msg.timestamp,
+          lamport_clock: msg.lamport_clock || this.lamportClock.getClock(),
+          vector_clock: msg.vector_clock || null,
           body: msg.body,
           status: "delivered",
           type: "chat",
@@ -1152,6 +1214,8 @@ export class PeerController {
 
     if (res.success) {
       const fileName = filePath.split(/[/\\]/).pop() || "file";
+      const fileClock = this.lamportClock.tick();
+      const fileVector = this.vectorClock.tick(this.displayName);
       const fileMsgRecord: MessageRecord = {
         message_id: crypto.randomUUID(),
         conversation_id: `conv_${receiver}`,
@@ -1160,6 +1224,8 @@ export class PeerController {
         direction: "out",
         seq: this.store.getNextSeq(receiver),
         timestamp: Date.now(),
+        lamport_clock: fileClock,
+        vector_clock: fileVector,
         body: `[File đính kèm: ${fileName}]`,
         status: "delivered",
         type: "file",
@@ -1211,8 +1277,8 @@ export class PeerController {
     return this.store.getKnownPeers();
   }
 
-  public getChatHistory(peer: string, limit = 50, beforeTimestamp?: number): MessageRecord[] {
-    return this.store.getHistory(peer, limit, beforeTimestamp);
+  public getChatHistory(peer: string, limit = 50, beforeClockOrTimestamp?: number): MessageRecord[] {
+    return this.store.getHistory(peer, limit, beforeClockOrTimestamp);
   }
 
   public deleteChatHistory(peer: string): void {
@@ -1236,6 +1302,9 @@ export class PeerController {
       this.registrySocket = null;
     }
     await this.channel.close();
+    try {
+      this.store.saveLamportClock(this.lamportClock.getClock());
+    } catch {}
     this.store.close();
     this.logger.close();
   }

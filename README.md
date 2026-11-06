@@ -27,6 +27,15 @@ Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân 
 - **Định tuyến Đa chặng Mesh Relay (Multi-hop Overlay Routing)**:
   - Khi đường truyền trực tiếp giữa Alice và Bob bị lỗi (khác mạng LAN, sau tường lửa/NAT, hoặc rớt mạng cục bộ), hệ thống **tự động kích hoạt cơ chế Mesh Relay** mượn một Peer thứ 3 (như Charlie) chuyển tiếp gói tin.
   - Đóng gói phong bì `RELAY_FORWARD`, lưu vết tuyến đường `route: ["Alice", "Charlie", "Bob"]`, chống lặp vòng định tuyến (Routing Loop Prevention), giới hạn chặng TTL (`hopCount < maxHops`), và bộ nhớ đệm đảo chiều (Reverse Path Caching) cho phản hồi ACK 2 chiều.
+- **Thứ tự sự kiện và Tính nhân quả (Logical Clocks & Causality - Leslie Lamport 1978)**:
+  - **Khắc phục triệt để Clock Drift / Clock Skew**: Giải quyết tiên đề cốt lõi của hệ phân tán (Leslie Lamport 1978: *"Không tồn tại đồng hồ vật lý toàn cục đồng bộ tuyệt đối"*).
+  - **Đồng hồ logic Lamport & Vector Clocks**:
+    - Mỗi gói tin `BaseMessage` đều mang trường `lamport_clock` (Scalar Lamport Clock) và `vector_clock` (Vector Clocks map).
+    - Cập nhật đồng hồ theo 2 quy tắc Lamport: Gửi/nội bộ: $L = L + 1$; Nhận: $L_{rec} = \max(L_{rec}, L_{msg}) + 1$.
+    - **Lamport Total Order**: Sắp xếp lịch sử tin nhắn tại SQLite và UI theo thứ tự toàn phần $(L, \text{sender}, \text{seq}, \text{timestamp})$. Dù đồng hồ máy Bob bị lệch lùi 1 giờ so với Alice hoặc gói tin bị trễ qua nhiều chặng Mesh Relay, **câu hỏi của Alice ($L=1$) luôn luôn hiển thị trước câu trả lời của Bob ($L=4$)**.
+    - **Phân giải xung đột DHT (Conflict Resolution)**: Khi ghi đè key-value trên DHT, node so sánh `lamport_clock` thay vì `Date.now()`, kiên quyết từ chối ghi đè dữ liệu mới hơn bằng dữ liệu cũ bị trễ mạng.
+    - **Bền vững & Đơn điệu (Monotonicity Across Restarts)**: Lưu trữ trạng thái đồng hồ logic vào bảng `node_state` trong SQLite, đảm bảo sau khi restart node, đồng hồ không bao giờ bị thụt lùi.
+    - **Trực quan hóa UI**: Hiển thị badge `L:<number>` ngay trên bong bóng chat của từng tin nhắn.
 - **Phần truyền nhận TCP P2P Direct**:
   - Peer Backend mở kết nối TCP Socket thô trực tiếp giữa các Peer, cơ chế Framing 4-bytes Length-prefixed chống vỡ/dính gói tin, chia nhỏ file thành chunk 64KB, hàng đợi tin nhắn offline, chống trùng tin nhắn qua UUID (`message_id`).
 - **Lưu trữ cục bộ**: Mỗi Peer sở hữu database SQLite độc lập (`better-sqlite3` / `node:sqlite`), tối ưu hóa RAM với WAL mode và giới hạn cache 2MB.
@@ -111,4 +120,28 @@ Mở trình duyệt:
 - Tab 1: `http://localhost:5173/?port=3001` (Giao diện của Alice)
 - Tab 2: `http://localhost:5173/?port=3002` (Giao diện của Bob)
 - Tab 3: `http://localhost:5173/?port=3003` (Giao diện của Charlie)
+
+---
+
+## 🧪 BỘ KIỂM THỬ TỰ ĐỘNG (AUTOMATED TEST SUITES)
+
+Dự án cung cấp bộ kịch bản kiểm thử toàn diện cho các tiên đề và giải thuật của Hệ thống Phân tán:
+
+```bash
+# 1. Kiểm thử Tính nhân quả & Đồng hồ Logic (Lamport Logical Clocks & Vector Clocks, Clock Skew immunity):
+npm run test:causality
+
+# 2. Kiểm thử Định tuyến đa chặng Mesh Relay (Multi-hop Overlay, TTL, Loop Prevention):
+npm run test:mesh
+
+# 3. Kiểm thử Bền vững dữ liệu DHT & Distributed Mailbox offline:
+npm run test:persistence
+
+# 4. Kiểm thử Xung đột định danh & Tự động hàn gắn phân mảnh mạng (Network Partition Healing):
+npm run test:healing
+
+# 5. Kiểm thử đơn vị thuật toán Kademlia DHT (XOR metric, K-buckets, LRU Eviction):
+npm run test:dht:unit
+```
+
 

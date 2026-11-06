@@ -15,6 +15,8 @@ export interface StoredValue {
   expiresAt: number;
   publisher: string;
   isLocalPublished?: boolean;
+  lamport_clock?: number;
+  version?: number;
 }
 
 export interface MailboxMessage {
@@ -22,6 +24,8 @@ export interface MailboxMessage {
   sender: string;
   receiver: string;
   timestamp: number;
+  lamport_clock?: number;
+  vector_clock?: Record<string, number>;
   body: string;
   seq: number;
   nonce?: string | null;
@@ -34,7 +38,9 @@ export interface IDhtPersistentStore {
     value: any,
     expiresAt: number,
     publisher: string,
-    isLocalPublished?: boolean
+    isLocalPublished?: boolean,
+    lamport_clock?: number,
+    version?: number
   ): void;
   getDhtRecord(key: string): StoredValue | null;
   deleteDhtRecord(key: string): void;

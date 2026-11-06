@@ -14,6 +14,8 @@ export interface MessageRecord {
   direction: "in" | "out";
   seq: number;
   timestamp: number;
+  lamport_clock?: number;
+  vector_clock?: Record<string, number> | null;
   body: string;
   status: "pending" | "sent" | "delivered" | "failed";
   type: "chat" | "file";

@@ -116,7 +116,15 @@ export function usePeerSocket(wsPort: number) {
               if (currentList.some((m) => m.message_id === msg.message_id)) {
                 return prev;
               }
-              return { ...prev, [partner]: [...currentList, msg] };
+              const nextList = [...currentList, msg];
+              nextList.sort((a, b) => {
+                const cA = a.lamport_clock ?? 0;
+                const cB = b.lamport_clock ?? 0;
+                if (cA !== cB) return cA - cB;
+                if (a.sender !== b.sender) return a.sender.localeCompare(b.sender);
+                return (a.seq ?? 0) - (b.seq ?? 0) || (a.timestamp ?? 0) - (b.timestamp ?? 0);
+              });
+              return { ...prev, [partner]: nextList };
             });
             break;
           }
@@ -135,9 +143,16 @@ export function usePeerSocket(wsPort: number) {
 
           case "CHAT_HISTORY": {
             const { peer, messages: histMsgs } = data;
+            const sorted = [...(histMsgs || [])].sort((a, b) => {
+              const cA = a.lamport_clock ?? 0;
+              const cB = b.lamport_clock ?? 0;
+              if (cA !== cB) return cA - cB;
+              if (a.sender !== b.sender) return a.sender.localeCompare(b.sender);
+              return (a.seq ?? 0) - (b.seq ?? 0) || (a.timestamp ?? 0) - (b.timestamp ?? 0);
+            });
             setMessages((prev) => ({
               ...prev,
-              [peer]: histMsgs
+              [peer]: sorted
             }));
             break;
           }

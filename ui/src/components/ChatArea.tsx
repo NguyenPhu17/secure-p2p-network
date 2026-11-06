@@ -393,6 +393,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                             isMe ? "text-zinc-400" : "text-[#64748B]"
                           }`}
                         >
+                          {msg.lamport_clock !== undefined && (
+                            <span
+                              className={`text-[10px] px-1 py-0.5 rounded font-mono font-medium ${
+                                isMe ? "bg-zinc-800 text-emerald-300" : "bg-[#CBD5E1] text-[#0F172A]"
+                              }`}
+                              title={`Lamport Logical Clock: L${msg.lamport_clock} (Leslie Lamport Causality Ordering)`}
+                            >
+                              L:{msg.lamport_clock}
+                            </span>
+                          )}
                           <span>{timeFormatted}</span>
                           {isMe && (
                             <span>
@@ -412,10 +422,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           {msg.body}
                         </span>
                         <span
-                          className={`inline-flex items-center gap-1 font-mono text-[11.5px] select-none shrink-0 self-end ml-[10px] ${
+                          className={`inline-flex items-center gap-1.5 font-mono text-[11.5px] select-none shrink-0 self-end ml-[10px] ${
                             isMe ? "text-zinc-400" : "text-[#64748B]"
                           }`}
                         >
+                          {msg.lamport_clock !== undefined && (
+                            <span
+                              className={`text-[10px] px-1 py-0.5 rounded font-mono font-medium ${
+                                isMe ? "bg-zinc-800 text-emerald-300" : "bg-[#E2E8F0] text-[#0F172A]"
+                              }`}
+                              title={`Lamport Logical Clock: L${msg.lamport_clock} (Leslie Lamport Causality Ordering)`}
+                            >
+                              L:{msg.lamport_clock}
+                            </span>
+                          )}
                           <span>{timeFormatted}</span>
                           {isMe && (
                             <span>

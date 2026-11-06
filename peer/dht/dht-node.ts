@@ -159,24 +159,62 @@ export class DhtNode {
     value: any,
     ttlMs: number,
     publisher: string,
-    isLocalPublished = false
-  ): void {
+    isLocalPublished = false,
+    lamportClock = 0,
+    version = 1
+  ): boolean {
+    const existing = this.storage.get(key) || (this.persistentStore ? this.persistentStore.getDhtRecord(key) : null);
+    if (existing && lamportClock > 0 && existing.lamport_clock) {
+      if (lamportClock < existing.lamport_clock) {
+        this.logger.warn(
+          "DHT",
+          `Từ chối ghi đè dữ liệu cũ: Lamport Clock nhận ${lamportClock} < hiện tại ${existing.lamport_clock} cho key '${key.substring(0, 10)}...'`
+        );
+        return false;
+      }
+      if (lamportClock === existing.lamport_clock && version < (existing.version || 1)) {
+        return false;
+      }
+    }
+
     const expiresAt = Date.now() + ttlMs;
     const entry: StoredValue = {
       value,
       expiresAt,
       publisher,
-      isLocalPublished
+      isLocalPublished,
+      lamport_clock: lamportClock,
+      version
     };
     this.storage.set(key, entry);
 
     if (this.persistentStore) {
       try {
-        this.persistentStore.saveDhtRecord(key, value, expiresAt, publisher, isLocalPublished);
+        this.persistentStore.saveDhtRecord(
+          key,
+          value,
+          expiresAt,
+          publisher,
+          isLocalPublished,
+          lamportClock,
+          version
+        );
       } catch (err: any) {
         this.logger.warn("DHT", `Lỗi khi lưu DHT record '${key}' vào SQLite: ${err.message}`);
       }
     }
+    return true;
+  }
+
+  /**
+   * Lấy bản ghi lưu trữ DHT theo key (từ RAM hoặc SQLite Store)
+   */
+  public getStorageEntry(key: string): StoredValue | undefined {
+    let entry = this.storage.get(key);
+    if (!entry && this.persistentStore) {
+      entry = this.persistentStore.getDhtRecord(key) || undefined;
+    }
+    return entry;
   }
 
   /**
@@ -375,6 +413,8 @@ export class DhtNode {
       case MessageType.DHT_STORE: {
         const payload = msg.payload as DhtStorePayload;
         let valueToStore = payload.value;
+        const incomingClock = payload.lamport_clock || msg.lamport_clock || 0;
+        const incomingVersion = payload.version || 1;
 
         // Xử lý CRDT hợp nhất tin nhắn nếu là Distributed Mailbox
         if (valueToStore && valueToStore.type === "mailbox" && Array.isArray(valueToStore.messages)) {
@@ -412,6 +452,39 @@ export class DhtNode {
               };
             }
           }
+        } else {
+          // Phân giải xung đột ghi đè dựa trên Lamport Logical Clocks & Version
+          let existing = this.storage.get(payload.key);
+          if (!existing && this.persistentStore) {
+            existing = this.persistentStore.getDhtRecord(payload.key) || undefined;
+          }
+          if (existing && incomingClock > 0 && existing.lamport_clock && incomingClock < existing.lamport_clock) {
+            this.logger.warn(
+              "DHT",
+              `Từ chối ghi đè dữ liệu cũ (Lamport Clock xung đột: nhận ${incomingClock} < hiện tại ${existing.lamport_clock}) cho key '${payload.key.substring(0, 10)}...'`
+            );
+            const ackMsg: BaseMessage<DhtStoreAckPayload> = {
+              type: MessageType.DHT_STORE_ACK,
+              message_id: crypto.randomUUID(),
+              sender: this.localInfo.displayName,
+              receiver: msg.sender,
+              seq: 0,
+              timestamp: Date.now(),
+              lamport_clock: incomingClock,
+              payload: {
+                req_id: msg.message_id,
+                key: payload.key,
+                status: "OK",
+                reason: "STALE_VERSION_IGNORED"
+              },
+              nonce: null,
+              mac_or_signature: null
+            };
+            if (from) {
+              await this.channel.sendMessage(from.ip, from.port, ackMsg);
+            }
+            return true;
+          }
         }
 
         // Lưu bền vững vào cả RAM và SQLite
@@ -420,7 +493,9 @@ export class DhtNode {
           valueToStore,
           payload.ttlMs || 3600000,
           payload.publisher,
-          false
+          false,
+          incomingClock,
+          incomingVersion
         );
 
         this.logger.info("DHT", `Đã lưu trữ DHT key '${payload.key.substring(0, 10)}...' từ ${payload.publisher} (Đã bền vững vào SQLite)`);
@@ -729,11 +804,26 @@ export class DhtNode {
 
   /**
    * Lưu trữ cặp key-value lên K node gần key nhất trong mạng DHT
-   * Đồng thời lưu bền vững vào SQLite với cờ isLocalPublished = true
+   * Đồng thời lưu bền vững vào SQLite với cờ isLocalPublished = true.
+   * Hỗ trợ Lamport Logical Clock & Version cho phân giải xung đột nhân quả.
    */
-  public async store(key: string, value: any, ttlMs: number = 3600000): Promise<number> {
+  public async store(
+    key: string,
+    value: any,
+    ttlMs: number = 3600000,
+    lamportClock: number = 0,
+    version: number = 1
+  ): Promise<number> {
     // 1. Lưu bản sao trên chính mình (RAM + SQLite, đánh dấu sở hữu bản quyền dữ liệu)
-    this.saveToStorage(key, value, ttlMs, this.localInfo.displayName, true);
+    this.saveToStorage(
+      key,
+      value,
+      ttlMs,
+      this.localInfo.displayName,
+      true,
+      lamportClock,
+      version
+    );
 
     // 2. Tìm K nodes gần key nhất
     const closest = await this.iterativeFindNode(key);
@@ -748,12 +838,15 @@ export class DhtNode {
         receiver: peer.displayName,
         seq: 0,
         timestamp: Date.now(),
+        lamport_clock: lamportClock,
         payload: {
           key,
           value,
           ttlMs,
           publisher: this.localInfo.displayName,
-          publisherNodeId: this.localNodeId
+          publisherNodeId: this.localNodeId,
+          lamport_clock: lamportClock,
+          version
         },
         nonce: null,
         mac_or_signature: null
