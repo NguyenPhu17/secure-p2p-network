@@ -1,6 +1,6 @@
 /**
- * Entrypoint của Registry Node (Mock KDC Server)
- * Lắng nghe kết nối TCP từ các Peer Node.
+ * Entrypoint của Registry Node (Discovery & Bootstrap Server)
+ * Lắng nghe kết nối TCP từ các Peer Node (Chế độ Discovery tập trung tùy chọn / Legacy).
  */
 
 import net from "node:net";
@@ -98,7 +98,7 @@ function handleIncomingMessage(
 // Bắt đầu lắng nghe
 server.listen(port, "0.0.0.0", () => {
   logger.info("SYSTEM", `========================================================`);
-  logger.info("SYSTEM", `🚀 REGISTRY (Mock KDC) đang lắng nghe tại TCP port: ${port}`);
+  logger.info("SYSTEM", `🚀 REGISTRY (Discovery & Bootstrap Server) đang lắng nghe tại TCP port: ${port}`);
   logger.info("SYSTEM", `   Heartbeat Timeout: ${config.registry.heartbeatTimeoutMs}ms`);
   logger.info("SYSTEM", `========================================================`);
   registryService.startHeartbeatMonitor();

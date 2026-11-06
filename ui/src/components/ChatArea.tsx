@@ -244,7 +244,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               <>
                 <span className="text-[#10B981] font-bold">[OK]</span>
                 <span className="text-[#065F46] font-medium">
-                  E2E Encrypted channel active • Kerberos session ticket confirmed
+                  E2E Encrypted channel active • Decentralized ECDH (X25519) key confirmed
                 </span>
               </>
             ) : (

@@ -1,7 +1,7 @@
-# Thiết kế và Hiện thực Mạng Phân tán P2P Dựa trên Kademlia DHT và Định tuyến Mesh Relay Kết hợp Bảo mật KDC
+# Thiết kế và Hiện thực Mạng Phân tán P2P Dựa trên Kademlia DHT và Định tuyến Mesh Relay Kết hợp Bảo mật E2EE Phi Tập Trung (Zero SPOF)
 ## Đề tài môn học: Các hệ thống phân tán (Distributed Systems)
 
-Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân tán Peer-to-Peer (P2P) kết hợp bảng băm phân tán Kademlia DHT (Zero SPOF), cơ chế định tuyến đa chặng Mesh Relay và mô hình Trung tâm Phân phối Khóa (Key Distribution Center - KDC). Ứng dụng thực nghiệm: Hệ thống chat thời gian thực và chia sẻ tập tin phân tán.
+Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân tán Peer-to-Peer (P2P) kết hợp bảng băm phân tán Kademlia DHT (Zero SPOF), cơ chế định tuyến đa chặng Mesh Relay và giải pháp bảo mật mã hóa đầu cuối E2EE phi tập trung (Zero SPOF) dựa trên trao đổi khóa Diffie-Hellman (ECDH / X25519) và chữ ký số Ed25519. Ứng dụng thực nghiệm: Hệ thống chat thời gian thực và chia sẻ tập tin phân tán.
 
 ---
 
@@ -18,6 +18,12 @@ Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân 
     - Khi đường truyền vật lý phục hồi, hai nửa mạng **tự động kết nối lại và hợp nhất K-bucket mà không cần khởi động lại bất kỳ node nào**.
   - Các hàm RPC giao thức: `DHT_PING`, `DHT_PONG`, `DHT_FIND_NODE`, `DHT_FIND_NODE_RESP`, `DHT_STORE`, `DHT_FIND_VALUE`.
   - Cơ chế giám sát sống/chết (Liveness Check) phi tập trung thông qua chu kỳ DHT Ping định kỳ giữa các peer, loại bỏ hoàn toàn Single Point of Failure (SPOF).
+- **Bảo mật E2EE Phi Tập Trung (Decentralized E2EE - Loại bỏ hoàn toàn KDC)**:
+  - **Mâu thuẫn kiến trúc KDC**: Mô hình KDC (Key Distribution Center như Kerberos / Needham-Schroeder) là kiến trúc Client-Server tập trung, tạo ra Single Point of Failure (SPOF). Nếu Server KDC sập, hai peer không thể xin khóa phiên để bảo mật, làm vô hiệu hóa thuộc tính Zero SPOF của DHT.
+  - **Khắc phục chuẩn phân tán**: Hệ thống sử dụng mô hình **E2EE (End-to-End Encryption) phi tập trung**:
+    - Mỗi peer tự sinh và lưu trữ cục bộ cặp khóa **Ed25519** trong SQLite (`node_identity`), định danh mật mã học bằng Node ID = `SHA1(PublicKey)`.
+    - Public Key được phát tán trực tiếp qua Kademlia DHT.
+    - Hai peer trao đổi khóa phiên trực tiếp bằng giao thức **Diffie-Hellman trên đường cong Elliptic (ECDH / X25519)** và xác thực bằng chữ ký Ed25519 chống Man-in-the-Middle (MITM), hoàn toàn không phụ thuộc bất kỳ máy chủ KDC trung gian nào.
 - **Định tuyến Đa chặng Mesh Relay (Multi-hop Overlay Routing)**:
   - Khi đường truyền trực tiếp giữa Alice và Bob bị lỗi (khác mạng LAN, sau tường lửa/NAT, hoặc rớt mạng cục bộ), hệ thống **tự động kích hoạt cơ chế Mesh Relay** mượn một Peer thứ 3 (như Charlie) chuyển tiếp gói tin.
   - Đóng gói phong bì `RELAY_FORWARD`, lưu vết tuyến đường `route: ["Alice", "Charlie", "Bob"]`, chống lặp vòng định tuyến (Routing Loop Prevention), giới hạn chặng TTL (`hopCount < maxHops`), và bộ nhớ đệm đảo chiều (Reverse Path Caching) cho phản hồi ACK 2 chiều.
@@ -25,7 +31,7 @@ Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân 
   - Peer Backend mở kết nối TCP Socket thô trực tiếp giữa các Peer, cơ chế Framing 4-bytes Length-prefixed chống vỡ/dính gói tin, chia nhỏ file thành chunk 64KB, hàng đợi tin nhắn offline, chống trùng tin nhắn qua UUID (`message_id`).
 - **Lưu trữ cục bộ**: Mỗi Peer sở hữu database SQLite độc lập (`better-sqlite3` / `node:sqlite`), tối ưu hóa RAM với WAL mode và giới hạn cache 2MB.
 - **Giao diện**: React + Vite + Tailwind CSS với bố cục 3 vùng (Sidebar hiển thị Node ID và danh sách peer, Khung chat & tiến độ file, Panel xem Protocol Logs trực tiếp có tab lọc DHT).
-- **Trạng thái bảo mật**: Truyền **Plaintext** (có chủ đích) phục vụ bắt gói tin Wireshark so sánh trước/sau khi cài đặt KDC và mã hóa ở Giai đoạn 2.
+- **Trạng thái bảo mật**: Truyền **Plaintext** (có chủ đích) phục vụ bắt gói tin Wireshark so sánh trước/sau khi kích hoạt mã hóa E2EE ở Giai đoạn 2.
 
 ---
 

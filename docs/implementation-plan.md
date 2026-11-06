@@ -1,4 +1,4 @@
-# KẾ HOẠCH TRIỂN KHAI: THIẾT KẾ VÀ HIỆN THỰC MẠNG PHÂN TÁN P2P DỰA TRÊN KADEMLIA DHT VÀ ĐỊNH TUYẾN MESH RELAY KẾT HỢP BẢO MẬT KDC
+# KẾ HOẠCH TRIỂN KHAI: THIẾT KẾ VÀ HIỆN THỰC MẠNG PHÂN TÁN P2P DỰA TRÊN KADEMLIA DHT VÀ ĐỊNH TUYẾN MESH RELAY KẾT HỢP BẢO MẬT E2EE PHI TẬP TRUNG (ZERO SPOF)
 ### Ứng dụng thực nghiệm: Chat thời gian thực & Truyền tập tin P2P (Distributed Core + React UI)
 
 ---
@@ -13,10 +13,11 @@
    - Dùng **Length-prefixed framing** (4 bytes `Int32BE` quy định độ dài payload + JSON UTF-8 payload). Cơ chế này tối ưu cho việc truyền file chunk và tin nhắn dài, tránh rủi ro vỡ/dính gói tin TCP stream.
 3. **Mô hình định danh Peer & Mạng**:
    - Một Peer định danh duy nhất bởi `displayName` (chuỗi ký tự). Khi chạy trên cùng máy, mỗi peer bind một cổng TCP riêng (ví dụ 8001, 8002...) và một cổng WebSocket riêng cho UI (ví dụ 3001, 3002...).
-   - Registry chạy trên cổng cố định (mặc định TCP `7000`, có thể cấu hình qua `.env` / config).
+   - Registry chạy trên cổng cố định (mặc định TCP `7000`, chỉ đóng vai trò Discovery / Bootstrap Node tùy chọn trong chế độ Legacy).
 4. **Trách nhiệm bảo mật**:
-   - Giai đoạn 1 toàn bộ gói tin truyền dạng **Plaintext** (để dễ dàng inspect Wireshark minh chứng trước/sau khi áp dụng KDC & crypto ở Giai đoạn 2).
+   - Giai đoạn 1 toàn bộ gói tin truyền dạng **Plaintext** (để dễ dàng inspect Wireshark minh chứng trước/sau khi áp dụng E2EE & crypto ở Giai đoạn 2).
    - Thiết kế cắm sẵn interface `Channel` và `MessageStore` có đầy đủ các trường `nonce`, `mac_or_signature`, và comment `TODO(SECURITY)`.
+   - **Loại bỏ KDC (Zero SPOF)**: Thay thế mô hình KDC tập trung bằng mô hình End-to-End Encryption (E2EE) phi tập trung: mỗi peer tự sinh cặp khóa Ed25519, tính Node ID = `SHA1(PublicKey)`, và trao đổi khóa phiên trực tiếp bằng Diffie-Hellman (ECDH / X25519) mà không cần bất kỳ máy chủ KDC nào.
 5. **Giao tiếp UI - Backend**:
    - Dùng duy nhất **WebSocket hai chiều** trên Localhost (`ws://127.0.0.1:<PORT>`) để gửi lệnh và nhận sự kiện real-time.
 6. **Thư mục tải file**:
@@ -52,14 +53,14 @@ Nhằm đảm bảo hệ thống có thể chạy đồng thời 3 hoặc nhiề
 #### 3.1.1. Sơ đồ kiến trúc mạng phân tán P2P Overlay & Các kênh truyền thông
 ```text
                              ┌───────────────────────────────────┬───────────────────────────────────┐
-                             │        REGISTRY NODE & MOCK KDC (CENTRALIZED DISCOVERY & AUTH)        │
-                             │ - TCP Service Port: 7000 (Centralized Discovery & Auth Server)        │
+                             │       REGISTRY NODE (OPTIONAL BOOTSTRAP / FALLBACK DISCOVERY ONLY)    │
+                             │ - TCP Service Port: 7000 (Centralized Discovery Tùy chọn / Legacy)    │
                              │ - Quản lý trạng thái Peer (Online/Offline) • Heartbeat (5s / 15s)     │
-                             │ - Phân phối khóa phiên KDC (Session Key) cho kênh mã hóa bảo mật      │
+                             │ - HOÀN TOÀN KHÔNG CÓ KDC: Không lưu khóa, không phân phối session key │
                              └───────────────────────────────────┴───────────────────────────────────┘
                                                                  │
                     ┌────────────────────────────────────────────┼────────────────────────────────────────────┐
-                    │ (Heartbeat / KDC)                          │ (Heartbeat / KDC)                          │ (Heartbeat / KDC)
+                    │ (Optional Discovery)                       │ (Optional Discovery)                       │ (Optional Discovery)
                     ▼                                            ▼                                            ▼
 ┌───────────────────┬───────────────────┐    ┌───────────────────┬───────────────────┐    ┌───────────────────┬───────────────────┐
 │ PEER ALICE (CLIENT NODE)              │    │ PEER CHARLIE (ROUTER & RELAY NODE)    │    │ PEER BOB (CLIENT NODE)                │
@@ -126,7 +127,7 @@ Nhằm đảm bảo hệ thống có thể chạy đồng thời 3 hoặc nhiề
 │ - Kademlia DHT: 160 K-Buckets, Node ID SHA1(Ed25519), DHT_PING/FIND_NODE, Partition Healing       │
 │ - FileTransfer Engine: Zero-RAM Streaming, cắt khối 64KB Buffer, kiểm tra SHA256 toàn vẹn         │
 │ - SQLite Local Store: Chế độ WAL, cache_size = -2000 (≤ 2MB RAM), đánh index (conv_id, time)      │
-│ - Security Extension (Phase 2): Cắm sẵn interface Nonce, Session Key KDC, HMAC / Signature        │
+│ - Security Extension (Phase 2): Cắm sẵn interface Nonce, E2EE (ECDH/X25519 & Ed25519), HMAC / Signature │
 └─────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
                                                   │▲ Structured Protocol Messages & Chunks
                                                   ▼│ Đóng gói / Bóc tách 4-Byte Length-Prefixed Frame
@@ -137,11 +138,11 @@ Nhằm đảm bảo hệ thống có thể chạy đồng thời 3 hoặc nhiề
 │ - Quản lý bộ đệm không rò rỉ: Stream bóc tách frame bằng offset pointer, không concat rác RAM     │
 └─────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
                                                   │▲ Raw TCP Socket Streams
-                                                  ▼│ (Plaintext TCP / Phase 2 KDC Encrypted)
+                                                  ▼│ (Plaintext TCP / Phase 2 E2EE Encrypted)
 ┌─────────────────────────────────────────────────┴─────────────────────────────────────────────────┐
 │ MẠNG VẬT LÝ & KÊNH TRUYỀN P2P (PHYSICAL & OVERLAY NETWORK CHANNELS)                               │
-│ - Kênh Registry Centralized: TCP Port 7000 (Đăng ký, Heartbeat 5s/15s, Bootstrap KDC)             │
-│ - Kênh Direct P2P: Kết nối TCP 1-1 trực tiếp (CHAT, FILE_CHUNK 64KB, ACK xác thực)                │
+│ - Kênh Registry Centralized (Tùy chọn): TCP Port 7000 (Đăng ký, Heartbeat 5s/15s - Zero Security) │
+│ - Kênh Direct P2P: Kết nối TCP 1-1 trực tiếp (CHAT, FILE_CHUNK 64KB, E2EE Handshake, ACK)         │
 │ - Kênh Mesh Relay & DHT: Đa chặng qua Charlie (RELAY_FORWARD, RELAY_ACK, DHT Lookup)              │
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -242,7 +243,7 @@ interface BaseMessage<T = any> {
   1. **Cột trái (280px)**: Tên hiển thị người dùng, danh sách peer online (chấm xanh), peer offline (chấm xám), số tin chưa đọc.
   2. **Khu giữa**: Header cuộc chat (tên đối phương + trạng thái kết nối + menu Xóa lịch sử); Khung hiển thị tin nhắn (tin của mình bên phải kèm status pending/sent/delivered, tin đối phương bên trái); Khung gõ tin kèm nút gửi và nút đính kèm file; Tiến độ file dạng thanh tiến trình nhỏ gọn.
   3. **Panel phải (Collapsible)**: Xem log gói tin giao thức trực tiếp (Type, Sender, Receiver, Seq, Length) phục vụ demo và kiểm tra Wireshark.
-  4. **Thanh trạng thái dưới đáy**: Hiển thị nhãn `Kênh truyền: Plaintext (Chưa mã hóa) - Chờ Giai đoạn 2 KDC`.
+  4. **Thanh trạng thái dưới đáy**: Hiển thị nhãn `Kênh truyền: Plaintext (Chưa mã hóa) - Chờ Giai đoạn 2 E2EE (Zero SPOF)`.
 
 ---
 

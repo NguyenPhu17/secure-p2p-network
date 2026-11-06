@@ -38,8 +38,10 @@ export enum MessageType {
   RELAY_FORWARD = "RELAY_FORWARD",
   RELAY_ACK = "RELAY_ACK",
 
-  // Placeholder cho KDC / Security Handshake
-  SECURITY_STUB = "SECURITY_STUB"
+  // Decentralized E2EE Key Exchange (Diffie-Hellman / ECDH & Ed25519 - Zero SPOF)
+  KEY_EXCHANGE_INIT = "KEY_EXCHANGE_INIT",
+  KEY_EXCHANGE_RESP = "KEY_EXCHANGE_RESP",
+  SECURITY_STUB = "SECURITY_STUB" // Giữ tương thích ngược
 }
 
 /**
@@ -213,6 +215,23 @@ export interface RelayAckPayload {
   status: "DELIVERED" | "FORWARDED" | "DROPPED";
   hopCount: number;
   reason?: string;
+}
+
+// -------------------------------------------------------------
+// PAYLOADS CHO BẢO MẬT E2EE PHI TẬP TRUNG (ECDH KEY EXCHANGE - ZERO SPOF)
+// -------------------------------------------------------------
+
+export interface KeyExchangeInitPayload {
+  ephemeralPublicKey: string; // Khóa công khai tạm thời X25519 (Base64/PEM)
+  signature: string;          // Ký bởi Ed25519 Private Key của người gửi để chống MITM
+  timestamp: number;
+}
+
+export interface KeyExchangeRespPayload {
+  req_id: string;             // message_id của KEY_EXCHANGE_INIT
+  ephemeralPublicKey: string; // Khóa công khai tạm thời X25519 của người nhận
+  signature: string;          // Ký bởi Ed25519 Private Key của người nhận để chống MITM
+  timestamp: number;
 }
 
 

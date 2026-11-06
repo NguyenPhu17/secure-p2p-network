@@ -97,13 +97,13 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
             type.includes("HANDSHAKE") ||
             type.includes("AUTH") ||
             type.includes("KEY") ||
-            type.includes("TICKET") ||
-            type.includes("KDC") ||
+            type.includes("E2EE") ||
+            type.includes("ECDH") ||
             cat.includes("SEC") ||
             sum.includes("MÃ HÓA") ||
             sum.includes("ENCRYPT") ||
-            sum.includes("KDC") ||
-            sum.includes("KERBEROS");
+            sum.includes("E2EE") ||
+            sum.includes("ECDH");
           if (!isSec) return false;
         } else if (categoryFilter === "SYSTEM") {
           if (log.direction !== "INTERNAL" && !type.includes("SYS") && !cat.includes("SYS")) return false;
@@ -135,7 +135,7 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
       tagColor = "text-[#0D9488]";
     } else if (t.includes("CHAT") || s.includes("CHAT")) {
       tagColor = "text-[#0284C7]";
-    } else if (t.includes("KEY") || t.includes("TICKET") || t.includes("KDC") || t.includes("AUTH")) {
+    } else if (t.includes("KEY") || t.includes("AUTH") || t.includes("E2EE") || t.includes("ECDH")) {
       tagColor = "text-[#D97706]";
     } else if (t.includes("ERROR") || t.includes("FAIL") || s.includes("FAIL") || s.includes("LỖI")) {
       tagColor = "text-[#E11D48]";
@@ -219,9 +219,9 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
                 </span>
               </div>
               <div className="flex justify-between items-center py-2">
-                <span className="text-[#64748B]">Auth / KDC</span>
+                <span className="text-[#64748B]">Security / E2EE</span>
                 <span className="text-[#0F172A] font-medium">
-                  {isEncrypted ? "KERBEROS TICKET (OK)" : "UNVERIFIED"}
+                  {isEncrypted ? "ECDH (X25519) E2EE (OK)" : "PLAINTEXT (ZERO SPOF)"}
                 </span>
               </div>
               <div className="flex justify-between items-center py-2">

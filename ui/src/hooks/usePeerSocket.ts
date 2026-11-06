@@ -9,7 +9,7 @@ const isHeartbeatLog = (entry: ProtocolLogEntry): boolean => {
 };
 
 /**
- * Tách riêng Heartbeat và các gói tin quan trọng (Chat, ACK, File, Bảo mật, KDC, Hệ thống):
+ * Tách riêng Heartbeat và các gói tin quan trọng (Chat, ACK, File, Bảo mật, E2EE, Hệ thống):
  * Giữ tối đa 30 Heartbeat gần nhất, giữ tối đa 2000 gói quan trọng với cơ chế lọc trùng (dedup),
  * tuyệt đối không để Heartbeat ghi đè hay làm mất các gói tin quan trọng.
  */
@@ -55,7 +55,7 @@ function filterAndMergeLogs(
   // Giữ lại tối đa 30 gói Heartbeat mới nhất
   const retainedHeartbeats = heartbeats.slice(-30);
 
-  // Giữ lại tối đa 2000 gói quan trọng (Chat, ACK, File, Handshake, Auth/KDC, System)
+  // Giữ lại tối đa 2000 gói quan trọng (Chat, ACK, File, Handshake, E2EE/Security, System)
   const retainedImportant = importantLogs.slice(-2000);
 
   // Sắp xếp lại theo timestamp tăng dần để hiển thị đúng thứ tự thời gian

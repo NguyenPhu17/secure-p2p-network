@@ -1,5 +1,5 @@
 /**
- * Dịch vụ Registry (Mock KDC - Giai đoạn 1)
+ * Dịch vụ Registry (Discovery & Bootstrap Node - Chế độ tùy chọn)
  * Quản lý danh sách Peer Online, Heartbeat, Phát hiện rớt mạng và thông báo discovery.
  */
 

@@ -1,7 +1,7 @@
 {
   "name": "secure-p2p-network",
   "version": "1.0.0",
-  "description": "Thiet ke va hien thuc mang phan tan P2P dua tren Kademlia DHT va dinh tuyen Mesh Relay ket hop bao mat KDC",
+  "description": "Thiet ke va hien thuc mang phan tan P2P dua tren Kademlia DHT va dinh tuyen Mesh Relay ket hop bao mat E2EE phi tap trung (Zero SPOF)",
   "type": "module",
   "scripts": {
     "registry": "tsx registry/index.ts",
