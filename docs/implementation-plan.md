@@ -47,98 +47,103 @@ Nhằm đảm bảo hệ thống có thể chạy đồng thời 3 hoặc nhiề
 
 ## 3. KIẾN TRÚC HỆ THỐNG & SƠ ĐỒ LUỒNG DỮ LIỆU
 
-### 3.1. Sơ đồ kiến trúc tổng thể (System Overview & Overlay Network)
+### 3.1. Sơ đồ kiến trúc tổng thể hệ thống (System Architecture & Layered Models)
 
-```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'fontSize': '13px',
-    'fontFamily': 'Segoe UI, Arial, sans-serif'
-  },
-  'flowchart': {
-    'rankSpacing': 35,
-    'nodeSpacing': 30,
-    'htmlLabels': true,
-    'useMaxWidth': false
-  }
-}}%%
-flowchart TB
-    %% Class Styles - Ép min-width đồng nhất để các ô và 3 Peer bằng nhau tuyệt đối, không bị cắt chữ
-    classDef kdc fill:#fffbeb,stroke:#d97706,stroke-width:2px,color:#92400e,rx:6,ry:6
-    classDef peer fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#166534,rx:6,ry:6
-    classDef relay fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#991b1b,rx:6,ry:6,min-width:240px
-    classDef ui fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e40af,rx:6,ry:6,min-width:240px
-    classDef internal fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#334155,rx:6,ry:6,min-width:240px
-    classDef db fill:#faf5ff,stroke:#9333ea,stroke-width:1.5px,color:#6b21a8,rx:6,ry:6,min-width:240px
-    classDef netbus fill:#f0fdfa,stroke:#0d9488,stroke-width:2px,color:#115e59,rx:6,ry:6
-    classDef relaybus fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#991b1b,rx:6,ry:6
+#### 3.1.1. Sơ đồ kiến trúc mạng phân tán P2P Overlay & Các kênh truyền thông
+```text
+                             ┌───────────────────────────────────┬───────────────────────────────────┐
+                             │        REGISTRY NODE & MOCK KDC (CENTRALIZED DISCOVERY & AUTH)        │
+                             │ - TCP Service Port: 7000 (Centralized Discovery & Auth Server)        │
+                             │ - Quản lý trạng thái Peer (Online/Offline) • Heartbeat (5s / 15s)     │
+                             │ - Phân phối khóa phiên KDC (Session Key) cho kênh mã hóa bảo mật      │
+                             └───────────────────────────────────┴───────────────────────────────────┘
+                                                                 │
+                    ┌────────────────────────────────────────────┼────────────────────────────────────────────┐
+                    │ (Heartbeat / KDC)                          │ (Heartbeat / KDC)                          │ (Heartbeat / KDC)
+                    ▼                                            ▼                                            ▼
+┌───────────────────┬───────────────────┐    ┌───────────────────┬───────────────────┐    ┌───────────────────┬───────────────────┐
+│ PEER ALICE (CLIENT NODE)              │    │ PEER CHARLIE (ROUTER & RELAY NODE)    │    │ PEER BOB (CLIENT NODE)                │
+│ - Vai trò: Client P2P gửi & nhận tin  │    │ - Vai trò: Nút trung gian định tuyến  │    │ - Vai trò: Client P2P gửi & nhận tin  │
+│ - Cổng TCP: 8001 | Cổng WS: 3001      │    │ - Cổng TCP: 8003 | Cổng WS: 3003      │    │ - Cổng TCP: 8002 | Cổng WS: 3002      │
+│ - Web UI: React Dashboard (Port 5173) │    │ - Web UI: Relay Monitor (Port 5173)   │    │ - Web UI: React Dashboard (Port 5173) │
+│ - UIBridge: WebSocket Event Stream    │    │ - UIBridge: WebSocket Event Stream    │    │ - UIBridge: WebSocket Event Stream    │
+│ - Controller: State & Offline Queue   │    │ - Router: Loop Check (TTL) & Cache    │    │ - Controller: State & Offline Queue   │
+│ - Kademlia DHT: 160 K-Buckets         │    │ - Kademlia DHT: 160 K-Buckets         │    │ - Kademlia DHT: 160 K-Buckets         │
+│ - FileTransfer: Zero-RAM Stream 64KB  │    │ - Relay Forwarder: Multi-hop Engine   │    │ - FileTransfer: Zero-RAM Stream 64KB  │
+│ - SQLite Store: WAL (≤ 2MB Cache)     │    │ - SQLite Store: WAL (≤ 2MB Cache)     │    │ - SQLite Store: WAL (≤ 2MB Cache)     │
+│ - TCP Transport: 4B Length-Prefixed   │    │ - TCP Transport: 4B Length-Prefixed   │    │ - TCP Transport: 4B Length-Prefixed   │
+└───────────────────┴───────────────────┘    └───────────────────┴───────────────────┘    └───────────────────┴───────────────────┘
+                    │ (Direct TCP Data)                          │ (Relay Bypass)                             │ (Direct TCP Data)
+                    ▼                                            │                                            ▼
+┌───────────────────┴────────────────────────────────────────────┼────────────────────────────────────────────┴───────────────────┐
+│ KÊNH 1: TRUYỀN THÔNG TRỰC TIẾP (DIRECT P2P TCP CHANNEL)                                                                         │
+│ - Kết nối TCP Socket thô 1-1: Alice (Port 8001) ◄══════════════╪═════════════════════════► Bob (Port 8002)                      │
+│ - Cơ chế Framing: 4-Byte Length-Prefixed (Int32BE) + Payload UTF-8 JSON / Stream nhị phân Zero-Copy                             │
+│ - Luồng dữ liệu: CHAT (tin nhắn 1-1), FILE_META & FILE_CHUNK (Stream 64KB Zero-RAM), CHAT_ACK, FILE_ACK                         │
+└───────────────────┬────────────────────────────────────────────┼────────────────────────────────────────────┬───────────────────┘
+                    │ (Mesh Fallback)                            │ (Relay Forward)                            │ (Mesh Fallback)
+                    ▼                                            ▼                                            ▼
+┌───────────────────┬────────────────────────────────────────────┬────────────────────────────────────────────┬───────────────────┐
+│ KÊNH 2: ĐỊNH TUYẾN MESH RELAY & KADEMLIA DHT (OVERLAY MESH & FALLBACK ROUTING)                                                  │
+│ - Định tuyến đa chặng: Alice (8001) ◄─── Hop 1 ───► Charlie (Router: 8003) ◄─── Hop 2 ───► Bob (8002)                           │
+│ - Cơ chế Mesh Relay: Gói tin RELAY_FORWARD, RELAY_ACK, kiểm tra Loop Detection, TTL, Reverse Path Cache                         │
+│ - Khám phá phân tán Kademlia DHT: 160 K-Buckets, Node ID SHA1(Ed25519), DHT_PING, DHT_FIND_NODE, Auto-Healing                   │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-    %% 1. Tầng Discovery tập trung (Nằm trên đỉnh)
-    subgraph KDC_LAYER["TẦNG REGISTRY / MOCK KDC (CENTRALIZED DISCOVERY & AUTH)"]
-        REG["<b>Registry Node / Mock KDC (TCP: 7000)</b><br/>Peer Discovery • Heartbeat (5s/15s) • Session Key KDC"]:::kdc
-    end
-
-    %% 2. Mạng P2P Overlay (3 Peer dàn hàng ngang)
-    subgraph P2P_OVERLAY["MẠNG PHÂN TÁN P2P OVERLAY"]
-        direction LR
-
-        %% Peer Node: Alice (Cột Trái)
-        subgraph PEER_ALICE["Peer Node: Alice (TCP: 8001 | WS: 3001)"]
-            direction TB
-            UI_A["<b>React Web UI (Port 5173)</b><br/>Client Dashboard"]:::ui
-            WS_A["<b>UIBridge (WS: 3001)</b><br/>Realtime Event Stream"]:::internal
-            CTRL_A["<b>PeerController & EventBus</b><br/>State & Offline Queue"]:::internal
-            SVC_A["<b>Core Services & Storage</b><br/>• Kademlia DHT (160 Buckets)<br/>• FileTransfer (Zero-RAM 64KB)<br/>• SQLite Store (WAL ≤ 2MB)"]:::db
-            NET_A["<b>TCP Transport Engine</b><br/>4B Length-Prefixed Frame"]:::internal
-
-            UI_A <--> WS_A <--> CTRL_A <--> SVC_A <--> NET_A
-        end
-
-        %% Peer Node: Charlie (Cột Giữa)
-        subgraph PEER_CHARLIE["Peer Node: Charlie (TCP: 8003 | WS: 3003)"]
-            direction TB
-            UI_C["<b>React Web UI (Port 5173)</b><br/>Relay Monitor UI"]:::ui
-            WS_C["<b>UIBridge (WS: 3003)</b><br/>Realtime Event Stream"]:::internal
-            CTRL_C["<b>PeerController & Router</b><br/>Loop Check & Reverse Path"]:::relay
-            SVC_C["<b>Core Services & Routing</b><br/>• Kademlia DHT (160 Buckets)<br/>• Relay Forwarder & Routing<br/>• SQLite Store (WAL ≤ 2MB)"]:::db
-            NET_C["<b>TCP Transport Engine</b><br/>4B Length-Prefixed Frame"]:::internal
-
-            UI_C <--> WS_C <--> CTRL_C <--> SVC_C <--> NET_C
-        end
-
-        %% Peer Node: Bob (Cột Phải)
-        subgraph PEER_BOB["Peer Node: Bob (TCP: 8002 | WS: 3002)"]
-            direction TB
-            UI_B["<b>React Web UI (Port 5173)</b><br/>Client Dashboard"]:::ui
-            WS_B["<b>UIBridge (WS: 3002)</b><br/>Realtime Event Stream"]:::internal
-            CTRL_B["<b>PeerController & EventBus</b><br/>State & Offline Queue"]:::internal
-            SVC_B["<b>Core Services & Storage</b><br/>• Kademlia DHT (160 Buckets)<br/>• FileTransfer (Zero-RAM 64KB)<br/>• SQLite Store (WAL ≤ 2MB)"]:::db
-            NET_B["<b>TCP Transport Engine</b><br/>4B Length-Prefixed Frame"]:::internal
-
-            UI_B <--> WS_B <--> CTRL_B <--> SVC_B <--> NET_B
-        end
-    end
-
-    %% 3. Tầng Kênh truyền P2P (Nằm dưới đáy)
-    subgraph P2P_CHANNELS["KÊNH GIAO TIẾP MẠNG P2P (DATA & CONTROL CHANNELS)"]
-        direction LR
-        CH_DIRECT["<b>1. Kênh Chính (Direct P2P TCP)</b><br/>Alice ⟷ Bob: CHAT & FILE_CHUNK (64KB)"]:::netbus
-        CH_RELAY["<b>2. Kênh Dự phòng & Định tuyến (DHT & Mesh Relay)</b><br/>Alice ⟷ Charlie ⟷ Bob: RELAY_FORWARD & DHT RPC"]:::relaybus
-    end
-
-    %% Kết nối từ KDC xuống 3 Peer
-    REG -.->|"Heartbeat & Bootstrap"| PEER_ALICE
-    REG -.->|"Heartbeat & Bootstrap"| PEER_CHARLIE
-    REG -.->|"Heartbeat & Bootstrap"| PEER_BOB
-
-    %% Kết nối từ đáy 3 Peer xuống các kênh P2P
-    NET_A <-->|"Direct TCP"| CH_DIRECT
-    NET_B <-->|"Direct TCP"| CH_DIRECT
-
-    NET_A <-->|"DHT / Fallback"| CH_RELAY
-    NET_C <-->|"Relay Router"| CH_RELAY
-    NET_B <-->|"DHT / Fallback"| CH_RELAY
+#### 3.1.2. Sơ đồ phân tầng kiến trúc nội bộ một Peer Node (Peer Internal Layered Stack)
+```text
+┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ TẦNG 1: GIAO DIỆN NGƯỜI DÙNG (PRESENTATION LAYER - REACT WEB UI)                                  │
+│ - Công nghệ: React 18, Vite, Tailwind CSS, TypeScript (Port 5173)                                 │
+│ - Chức năng: Dashboard điều khiển, danh sách Peer Online/Offline, phòng chat 1-1                  │
+│ - Tiến độ file: Hiển thị thanh tiến trình trực quan (% progress, tốc độ MB/s)                     │
+│ - Panel Protocol Logs: Xem gói tin giao thức trực tiếp (Type, Sender, Seq, Len) để demo           │
+└─────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                  │▲ WebSocket 2 chiều (JSON Commands & Events)
+                                                  ▼│ Zero Binary Buffering (Chỉ truyền % tiến độ file)
+┌─────────────────────────────────────────────────┴─────────────────────────────────────────────────┐
+│ TẦNG 2: CẦU NỐI ĐIỀU KHIỂN & SỰ KIỆN (UIBRIDGE & EVENT STREAM)                                    │
+│ - Công nghệ: WebSocket Server hai chiều (ws://127.0.0.1:<wsPort>)                                 │
+│ - Giao tiếp UI: Đẩy sự kiện realtime (tin nhắn đến, peer online/offline, tiến độ file)            │
+│ - Bounded Protocol Logs Buffer: Ring buffer FIFO giữ tối đa 100 log gần nhất trong RAM            │
+│ - Tối ưu hóa UI: Không đẩy payload nhị phân file lên WebSocket để tránh đơ giao diện              │
+└─────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                  │▲ Node.js EventEmitter (Internal EventBus)
+                                                  ▼│ Dispatch hành động UI xuống Controller & Core Services
+┌─────────────────────────────────────────────────┴─────────────────────────────────────────────────┐
+│ TẦNG 3: ĐIỀU PHỐI & ĐỊNH TUYẾN MẠNG (PEER CONTROLLER & ROUTER ENGINE)                             │
+│ - PeerController: Quản trị vòng đời node, presence, xử lý sự kiện từ EventBus                     │
+│ - Offline Message Queue: Lưu tạm tin nhắn pending vào SQLite khi Peer đích vắng mặt               │
+│ - Router Engine: Tự động chọn kênh truyền (Ưu tiên Direct P2P TCP -> Fallback Mesh Relay)         │
+│ - Loop Detection: Kiểm tra Route Path và giới hạn TTL hopCount tránh lặp vòng lặp vô tận          │
+│ - Reverse Path Routing Cache: Ghi nhớ chặng ngược để forward phản hồi RELAY_ACK về nguồn          │
+└─────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                  │▲ API Calls & Data Buffers (Stream 64KB)
+                                                  ▼│ Gọi hàm lưu SQLite WAL, DHT Routing, File Streaming
+┌─────────────────────────────────────────────────┴─────────────────────────────────────────────────┐
+│ TẦNG 4: DỊCH VỤ CỐT LÕI & LƯU TRỮ (CORE SERVICES & STORAGE LAYER)                                 │
+│ - Kademlia DHT: 160 K-Buckets, Node ID SHA1(Ed25519), DHT_PING/FIND_NODE, Partition Healing       │
+│ - FileTransfer Engine: Zero-RAM Streaming, cắt khối 64KB Buffer, kiểm tra SHA256 toàn vẹn         │
+│ - SQLite Local Store: Chế độ WAL, cache_size = -2000 (≤ 2MB RAM), đánh index (conv_id, time)      │
+│ - Security Extension (Phase 2): Cắm sẵn interface Nonce, Session Key KDC, HMAC / Signature        │
+└─────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                  │▲ Structured Protocol Messages & Chunks
+                                                  ▼│ Đóng gói / Bóc tách 4-Byte Length-Prefixed Frame
+┌─────────────────────────────────────────────────┴─────────────────────────────────────────────────┐
+│ TẦNG 5: VẬN CHUYỂN GÓI TIN TCP (TCP TRANSPORT & FRAMING ENGINE)                                   │
+│ - Raw TCP Socket Manager: Quản lý pool kết nối TCP giữa các Peer Backend (Ports 8001, 8002...)    │
+│ - Framing Protocol: [4 Bytes Length UInt32BE] + [JSON String UTF-8 / Raw Chunk Buffer]            │
+│ - Quản lý bộ đệm không rò rỉ: Stream bóc tách frame bằng offset pointer, không concat rác RAM     │
+└─────────────────────────────────────────────────┬─────────────────────────────────────────────────┘
+                                                  │▲ Raw TCP Socket Streams
+                                                  ▼│ (Plaintext TCP / Phase 2 KDC Encrypted)
+┌─────────────────────────────────────────────────┴─────────────────────────────────────────────────┐
+│ MẠNG VẬT LÝ & KÊNH TRUYỀN P2P (PHYSICAL & OVERLAY NETWORK CHANNELS)                               │
+│ - Kênh Registry Centralized: TCP Port 7000 (Đăng ký, Heartbeat 5s/15s, Bootstrap KDC)             │
+│ - Kênh Direct P2P: Kết nối TCP 1-1 trực tiếp (CHAT, FILE_CHUNK 64KB, ACK xác thực)                │
+│ - Kênh Mesh Relay & DHT: Đa chặng qua Charlie (RELAY_FORWARD, RELAY_ACK, DHT Lookup)              │
+└───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 3.2. Luồng hoạt động chính
