@@ -16,12 +16,14 @@ import {
   ChevronDown,
   ChevronUp,
   Shield,
+  ShieldOff,
   Share2
 } from "lucide-react";
 
 interface ChatAreaProps {
   activePeer: string | null;
   isPeerOnline: boolean;
+  isPeerBlocked?: boolean;
   peerInfo?: PeerInfo;
   channelStatus: string;
   messages: MessageRecord[];
@@ -29,11 +31,13 @@ interface ChatAreaProps {
   onSendMessage: (body: string) => void;
   onSendFile: (filePath: string) => void;
   onDeleteHistory: () => void;
+  onToggleFirewallBlock?: (blocked: boolean) => void;
 }
 
 export const ChatArea: React.FC<ChatAreaProps> = ({
   activePeer,
   isPeerOnline,
+  isPeerBlocked = false,
   peerInfo,
   channelStatus,
   messages,
@@ -41,6 +45,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onSendMessage,
   onSendFile,
   onDeleteHistory,
+  onToggleFirewallBlock,
 }) => {
   const [text, setText] = useState("");
   const [showFileModal, setShowFileModal] = useState(false);
@@ -135,7 +140,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
             <span
               className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ring-2 ring-white ${
-                isPeerOnline ? "bg-[#10B981]" : "bg-[#94A3B8]"
+                isPeerBlocked ? "bg-[#F59E0B]" : isPeerOnline ? "bg-[#10B981]" : "bg-[#94A3B8]"
               }`}
             />
           </div>
@@ -165,8 +170,37 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         </div>
 
-        {/* Clear History Ghost Button */}
-        <div className="flex-shrink-0">
+        {/* Firewall Simulation + Clear History Controls */}
+        <div className="flex items-center space-x-2 flex-shrink-0">
+          {onToggleFirewallBlock && (
+            <button
+              type="button"
+              onClick={() => onToggleFirewallBlock(!isPeerBlocked)}
+              className={`px-2.5 py-1.5 rounded-[6px] text-[12px] font-mono font-medium border flex items-center gap-1.5 transition-colors cursor-pointer ${
+                isPeerBlocked
+                  ? "bg-[#FFFBEB] border-[#F59E0B] text-[#B45309] hover:bg-[#FEF3C7]"
+                  : "bg-white border-[#CBD5E1] text-[#0F172A] hover:bg-[#F8FAFC]"
+              }`}
+              title={
+                isPeerBlocked
+                  ? "Đang giả lập Firewall/NAT chặn Direct TCP — Bấm để mở lại kết nối trực tiếp"
+                  : "Giả lập Firewall/NAT chặn kết nối trực tiếp để ép định tuyến qua Mesh Relay"
+              }
+            >
+              {isPeerBlocked ? (
+                <>
+                  <ShieldOff className="w-3.5 h-3.5 text-[#D97706]" />
+                  <span>ĐANG CHẶN DIRECT</span>
+                </>
+              ) : (
+                <>
+                  <Shield className="w-3.5 h-3.5 text-[#64748B]" />
+                  <span>CHẶN DIRECT</span>
+                </>
+              )}
+            </button>
+          )}
+
           {confirmDelete ? (
             <div className="flex items-center space-x-1.5 bg-[#F8FAFC] p-1 rounded-[6px] border border-[#E2E8F0]">
               <span className="text-[12px] font-mono text-[#64748B] px-1.5">Xác nhận xóa?</span>
@@ -202,8 +236,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       <div className="h-[40px] min-h-[40px] border-b border-[#E2E8F0] bg-[#F8FAFC] px-[28px] text-[12.5px] font-mono text-[#64748B] flex items-center justify-between select-none">
         <div className="flex items-center gap-2.5 truncate">
           <span className="flex items-center gap-1.5 font-semibold text-[#0F172A] flex-shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] inline-block" />
-            TCP_SOCKET
+            <span
+              className={`w-1.5 h-1.5 rounded-full inline-block ${
+                isPeerBlocked ? "bg-[#F59E0B]" : "bg-[#10B981]"
+              }`}
+            />
+            {isPeerBlocked ? "MESH_RELAY" : "TCP_SOCKET"}
           </span>
           <span className="text-[#CBD5E1]">|</span>
           <span className="truncate">
@@ -266,12 +304,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           <div className="flex items-center space-x-2.5 min-w-0">
             <Shield className={`w-4 h-4 flex-shrink-0 ${isEncrypted ? "text-[#10B981]" : "text-[#D97706]"}`} />
             <span className="truncate">
-              Kênh truyền TCP trực tiếp với <strong className="font-semibold text-[#0F172A]">{activePeer}</strong>{" "}
-              <span className="font-mono text-[12px] text-[#64748B]">({remoteAddr})</span> • Chế độ:{" "}
-              <strong className={isEncrypted ? "text-[#065F46] font-semibold" : "text-[#B45309] font-semibold"}>
-                {isEncrypted ? "AES-256 E2E (Đã mã hóa phiên)" : "Plaintext (Chưa mã hóa)"}
-              </strong>
-              {!isEncrypted && " • Nhấn Handshake để thiết lập khóa phiên"}
+              {isPeerBlocked ? (
+                <>
+                  Giả lập Firewall/NAT đang chặn TCP trực tiếp tới{" "}
+                  <strong className="font-semibold text-[#B45309]">{activePeer}</strong> • Tự động chuyển tiếp đa chặng qua{" "}
+                  <strong className="font-semibold text-[#0F172A]">Mesh Relay</strong>
+                </>
+              ) : (
+                <>
+                  Kênh truyền TCP trực tiếp với <strong className="font-semibold text-[#0F172A]">{activePeer}</strong>{" "}
+                  <span className="font-mono text-[12px] text-[#64748B]">({remoteAddr})</span> • Chế độ:{" "}
+                  <strong className={isEncrypted ? "text-[#065F46] font-semibold" : "text-[#B45309] font-semibold"}>
+                    {isEncrypted ? "AES-256 E2E (Đã mã hóa phiên)" : "Plaintext (Chưa mã hóa)"}
+                  </strong>
+                  {!isEncrypted && " • Nhấn Handshake để thiết lập khóa phiên"}
+                </>
+              )}
             </span>
           </div>
           <button
@@ -413,6 +461,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                           )}
                         </span>
                       </div>
+                      {msg.relayed_by && (
+                        <div
+                          className={`text-[10.5px] font-mono flex items-center gap-1 pt-0.5 select-none ${
+                            isMe ? "text-amber-300/80" : "text-amber-600"
+                          }`}
+                          title={`Tuyến Mesh: ${msg.route ? msg.route.join(" ➔ ") : `qua ${msg.relayed_by}`}`}
+                        >
+                          <Share2 className="w-3 h-3" />
+                          <span>Mesh Relay via {msg.relayed_by}</span>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     /* Chat message with inline bottom-right metadata */

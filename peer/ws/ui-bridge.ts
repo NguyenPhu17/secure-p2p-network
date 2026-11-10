@@ -37,6 +37,7 @@ export class UIBridge {
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
+            knownPeers: this.peerController.getKnownPeersForUI(),
             blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
@@ -85,6 +86,7 @@ export class UIBridge {
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
+            knownPeers: this.peerController.getKnownPeersForUI(),
             blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()

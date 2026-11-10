@@ -69,10 +69,12 @@ export function usePeerSocket(wsPort: number) {
   const [me, setMe] = useState<string>("");
   const [tcpPort, setTcpPort] = useState<number>(0);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
+  const [knownPeers, setKnownPeers] = useState<PeerInfo[]>([]);
   const [activePeer, setActivePeer] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, MessageRecord[]>>({});
   const [fileTransfers, setFileTransfers] = useState<Record<string, FileTransferProgress>>({});
   const [logs, setLogs] = useState<ProtocolLogEntry[]>([]);
+  const [blockedPeers, setBlockedPeers] = useState<string[]>([]);
   const [channelStatus, setChannelStatus] = useState<string>("Plaintext (Chưa mã hóa)");
   const [errorAlert, setErrorAlert] = useState<string | null>(null);
 
@@ -97,15 +99,37 @@ export function usePeerSocket(wsPort: number) {
           case "INITIAL_STATE":
             setMe(data.me);
             setTcpPort(data.tcpPort);
-            setPeers(data.peers);
+            setPeers(data.peers || []);
+            if (Array.isArray(data.knownPeers)) {
+              setKnownPeers(data.knownPeers);
+            } else {
+              setKnownPeers((data.peers || []).map((p: PeerInfo) => ({ ...p, online: true })));
+            }
             setChannelStatus(data.channelStatus);
+            setBlockedPeers(Array.isArray(data.blockedPeers) ? data.blockedPeers : []);
             if (data.logs) {
               setLogs(filterAndMergeLogs([], data.logs));
             }
             break;
 
-          case "PEER_LIST_UPDATE":
-            setPeers(data);
+          case "PEER_LIST_UPDATE": {
+            const onlineList: PeerInfo[] = data || [];
+            setPeers(onlineList);
+            setKnownPeers((prev) => {
+              const onlineMap = new Map(onlineList.map((p) => [p.displayName, { ...p, online: true }]));
+              const merged: PeerInfo[] = Array.from(onlineMap.values());
+              for (const existing of prev) {
+                if (!onlineMap.has(existing.displayName)) {
+                  merged.push({ ...existing, online: false });
+                }
+              }
+              return merged;
+            });
+            break;
+          }
+
+          case "KNOWN_PEERS_UPDATE":
+            setKnownPeers(data || []);
             break;
 
           case "NEW_MESSAGE": {
@@ -130,13 +154,37 @@ export function usePeerSocket(wsPort: number) {
           }
 
           case "MESSAGE_STATUS_UPDATE": {
-            const { message_id, status } = data;
+            const { message_id, status, relayed_by, route } = data;
             setMessages((prev) => {
               const updated: Record<string, MessageRecord[]> = {};
               for (const [k, list] of Object.entries(prev)) {
-                updated[k] = list.map((m) => (m.message_id === message_id ? { ...m, status } : m));
+                updated[k] = list.map((m) =>
+                  m.message_id === message_id
+                    ? {
+                        ...m,
+                        status,
+                        relayed_by: relayed_by !== undefined ? relayed_by : m.relayed_by,
+                        route: route !== undefined ? route : m.route
+                      }
+                    : m
+                );
               }
               return updated;
+            });
+            break;
+          }
+
+          case "FIREWALL_STATUS_UPDATE": {
+            const { peer, blocked } = data || {};
+            if (!peer) break;
+            setBlockedPeers((prev) => {
+              const next = new Set(prev);
+              if (blocked) {
+                next.add(peer);
+              } else {
+                next.delete(peer);
+              }
+              return Array.from(next);
             });
             break;
           }
@@ -242,11 +290,19 @@ export function usePeerSocket(wsPort: number) {
     }
   }, []);
 
+  const toggleFirewallBlock = useCallback((peer: string, blocked: boolean) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ action: "SIMULATE_BLOCK", peer, blocked }));
+    }
+  }, []);
+
   return {
     connected,
     me,
     tcpPort,
     peers,
+    knownPeers,
+    blockedPeers,
     activePeer,
     setActivePeer,
     messages: activePeer ? messages[activePeer] || [] : [],
@@ -258,7 +314,8 @@ export function usePeerSocket(wsPort: number) {
     sendChat,
     sendFile,
     loadHistory,
-    deleteHistory
+    deleteHistory,
+    toggleFirewallBlock
   };
 }
 

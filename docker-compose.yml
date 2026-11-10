@@ -50,7 +50,7 @@ services:
       - PEER_TCP_PORT=8002
       - PEER_UI_PORT=3002
       - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=peer-alice:8001
+      - BOOTSTRAP_PEERS=peer-alice:8001,peer-charlie:8003
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads

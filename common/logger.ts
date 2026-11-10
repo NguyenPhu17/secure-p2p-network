@@ -61,23 +61,32 @@ export class Logger {
       ...entryInput
     };
 
-    // 1. Tối ưu RAM: Ring buffer duy trì tối đa maxEntries nhưng bảo toàn các gói tin quan trọng (không để Heartbeat đẩy trôi)
+    // 1. Tối ưu RAM: Ring buffer duy trì tối đa maxEntries nhưng bảo toàn các gói tin quan trọng (không để Heartbeat hoặc lỗi ping lặp lại đẩy trôi DHT/Protocol logs)
     this.ringBuffer.push(entry);
     if (this.ringBuffer.length > Math.max(this.maxEntries, 300)) {
       const heartbeats: LogEntry[] = [];
+      const noisyNetworkWarnings: LogEntry[] = [];
       const important: LogEntry[] = [];
       for (const item of this.ringBuffer) {
         const type = (item.messageType || "").toUpperCase();
         const sum = (item.summary || "").toUpperCase();
         if (type.includes("HEARTBEAT") || sum.includes("HEARTBEAT")) {
           heartbeats.push(item);
+        } else if (
+          item.category === "NETWORK" &&
+          item.level === "WARN" &&
+          sum.includes("KHÔNG THỂ KẾT NỐI TCP")
+        ) {
+          noisyNetworkWarnings.push(item);
         } else {
           important.push(item);
         }
       }
-      this.ringBuffer = [...important.slice(-290), ...heartbeats.slice(-10)].sort(
-        (a, b) => a.timestamp - b.timestamp
-      );
+      this.ringBuffer = [
+        ...important.slice(-250),
+        ...noisyNetworkWarnings.slice(-40),
+        ...heartbeats.slice(-10)
+      ].sort((a, b) => a.timestamp - b.timestamp);
     }
 
     // 2. Ghi ra console

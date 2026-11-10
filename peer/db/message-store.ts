@@ -330,6 +330,12 @@ export class MessageStore implements IDhtPersistentStore {
     return stmt.all() as any[];
   }
 
+  public getConversationPeers(): string[] {
+    const stmt = this.db.prepare("SELECT peer_name FROM conversations ORDER BY last_message_at DESC");
+    const rows = stmt.all() as Array<{ peer_name: string }>;
+    return rows.map((r) => r.peer_name).filter(Boolean);
+  }
+
   public getPeer(peerName: string): PeerInfo | null {
     const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen, node_id as nodeId, public_key as publicKey FROM peers WHERE peer_name = ?");
     const row = stmt.get(peerName) as any;

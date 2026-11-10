@@ -70,6 +70,7 @@ export interface PeerInfo {
   lastSeen?: number;
   nodeId?: string; // 160-bit hex ID trong không gian Kademlia DHT (SHA1(PublicKey))
   publicKey?: string; // Khóa công khai Ed25519 (PEM/SPKI) phục vụ định danh mật mã học
+  online?: boolean; // Trạng thái online/offline phục vụ hiển thị UI Sidebar
 }
 
 /**
@@ -181,6 +182,7 @@ export interface DhtFindNodeRespPayload {
   req_id: string; // message_id của DHT_FIND_NODE gốc
   targetNodeId: string;
   nodes: PeerInfo[];
+  responderInfo?: PeerInfo;
 }
 
 export interface DhtStorePayload {
@@ -212,6 +214,7 @@ export interface DhtFindValueRespPayload {
   found: boolean;
   value?: any;
   nodes?: PeerInfo[];
+  responderInfo?: PeerInfo;
 }
 
 // -------------------------------------------------------------
@@ -235,6 +238,7 @@ export interface RelayAckPayload {
   status: "DELIVERED" | "FORWARDED" | "DROPPED";
   hopCount: number;
   reason?: string;
+  innerMessageId?: string;
 }
 
 // -------------------------------------------------------------

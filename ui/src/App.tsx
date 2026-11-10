@@ -19,6 +19,8 @@ export const App: React.FC = () => {
     me,
     tcpPort,
     peers,
+    knownPeers,
+    blockedPeers,
     activePeer,
     setActivePeer,
     messages,
@@ -30,7 +32,8 @@ export const App: React.FC = () => {
     sendChat,
     sendFile,
     loadHistory,
-    deleteHistory
+    deleteHistory,
+    toggleFirewallBlock
   } = usePeerSocket(wsPort || 3001);
 
   useEffect(() => {
@@ -51,8 +54,11 @@ export const App: React.FC = () => {
     );
   }
 
-  const activePeerInfo = peers.find((p) => p.displayName === activePeer);
-  const isPeerOnline = !!activePeerInfo;
+  const activePeerInfo =
+    knownPeers.find((p) => p.displayName === activePeer) ||
+    peers.find((p) => p.displayName === activePeer);
+  const isPeerOnline = peers.some((p) => p.displayName === activePeer);
+  const isPeerBlocked = activePeer ? blockedPeers.includes(activePeer) : false;
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-white text-[#0F172A] font-sans antialiased">
@@ -65,7 +71,8 @@ export const App: React.FC = () => {
         <Sidebar
           me={me}
           tcpPort={tcpPort}
-          peers={peers}
+          peers={knownPeers}
+          blockedPeers={blockedPeers}
           activePeer={activePeer}
           onSelectPeer={(name) => setActivePeer(name)}
         />
@@ -74,6 +81,7 @@ export const App: React.FC = () => {
         <ChatArea
           activePeer={activePeer}
           isPeerOnline={isPeerOnline}
+          isPeerBlocked={isPeerBlocked}
           peerInfo={activePeerInfo}
           channelStatus={channelStatus}
           messages={messages}
@@ -81,6 +89,7 @@ export const App: React.FC = () => {
           onSendMessage={(body) => activePeer && sendChat(activePeer, body)}
           onSendFile={(filePath) => activePeer && sendFile(activePeer, filePath)}
           onDeleteHistory={() => activePeer && deleteHistory(activePeer)}
+          onToggleFirewallBlock={(blocked) => activePeer && toggleFirewallBlock(activePeer, blocked)}
         />
 
         {/* Column 3: TCP Protocol Inspector Panel */}
@@ -92,6 +101,7 @@ export const App: React.FC = () => {
           tcpPort={tcpPort}
           activePeer={activePeer}
           activePeerInfo={activePeerInfo}
+          isPeerBlocked={isPeerBlocked}
           channelStatus={channelStatus}
         />
       </div>

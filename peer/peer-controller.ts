@@ -87,6 +87,7 @@ export class PeerController {
   // Callbacks thông báo tới UI Bridge
   private uiListeners: UIEventCallback[] = [];
   private mailboxPollTimer: NodeJS.Timeout | null = null;
+  private isCheckingMailbox = false;
   private isClosing = false;
 
   // Leslie Lamport Logical Clock & Vector Clock (Thứ tự sự kiện và Tính nhân quả)
@@ -172,14 +173,23 @@ export class PeerController {
 
     // Lắng nghe sự kiện khám phá peer từ DHT
     this.dht.onPeerJoined((peer) => {
-      const isSelf = (peer.nodeId && peer.nodeId.toLowerCase() === this.nodeId.toLowerCase()) ||
-        (peer.ip === this.ip && peer.tcpPort === this.tcpPort);
-      if (!isSelf) {
+      if (!this.isSelfPeer(peer)) {
         // Nhận diện peer theo nodeId để tránh ghi đè khi 2 người cùng nhập --name Alice
-        const peerKey = peer.nodeId || peer.displayName;
+        const peerKey = this.getPeerKey(peer);
+        const normIp = peer.ip.trim().toLowerCase();
+        // Loại bỏ định danh cũ nếu trước đó từng dùng chung ip:tcpPort
+        for (const [existingKey, existingPeer] of this.onlinePeers.entries()) {
+          if (
+            existingKey !== peerKey &&
+            existingPeer.ip.trim().toLowerCase() === normIp &&
+            existingPeer.tcpPort === peer.tcpPort
+          ) {
+            this.onlinePeers.delete(existingKey);
+          }
+        }
         this.onlinePeers.set(peerKey, peer);
         this.store.upsertPeer(peer);
-        this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+        this.emitPeerLists();
         this.flushPendingMessages(peer.displayName);
         // Tự động kéo tin nhắn offline từ Distributed Mailbox khi topology mạng mở rộng
         this.checkDistributedMailbox().catch(() => {});
@@ -187,10 +197,32 @@ export class PeerController {
     });
 
     this.dht.onPeerLeft((peer) => {
-      const peerKey = peer.nodeId || peer.displayName;
+      const peerKey = this.getPeerKey(peer);
       this.onlinePeers.delete(peerKey);
-      this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+      this.emitPeerLists();
     });
+  }
+
+  private isSelfPeer(peer: PeerInfo): boolean {
+    if (peer.nodeId && peer.nodeId.toLowerCase() === this.nodeId.toLowerCase()) {
+      return true;
+    }
+    if (peer.publicKey && peer.publicKey === this.publicKey) {
+      return true;
+    }
+    if (
+      peer.ip &&
+      peer.tcpPort &&
+      peer.ip.trim().toLowerCase() === this.ip.trim().toLowerCase() &&
+      peer.tcpPort === this.tcpPort
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private getPeerKey(peer: PeerInfo): string {
+    return peer.nodeId ? peer.nodeId.toLowerCase() : peer.displayName;
   }
 
   public getLogger(): Logger {
@@ -221,6 +253,11 @@ export class PeerController {
         // Tránh lỗi UI ảnh hưởng tới controller
       }
     }
+  }
+
+  private emitPeerLists(): void {
+    this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+    this.emitUI("KNOWN_PEERS_UPDATE", this.getKnownPeersForUI());
   }
 
   /**
@@ -345,7 +382,7 @@ export class PeerController {
           // Bắt đầu gửi Heartbeat định kỳ 5s
           this.startHeartbeat();
 
-          this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+          this.emitPeerLists();
           if (onRegistered) onRegistered();
         } else {
           const err = new Error(`Đăng ký bị từ chối: ${payload.reason}`);
@@ -367,7 +404,7 @@ export class PeerController {
           this.logger.info("PROTOCOL", `Peer mới online: '${p.displayName}' (${p.ip}:${p.tcpPort})`);
           this.onlinePeers.set(p.displayName, p);
           this.store.upsertPeer(p);
-          this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+          this.emitPeerLists();
 
           // Khi peer đối tác vừa online, tự động gửi các tin nhắn đang chờ (Offline queue flush)
           this.flushPendingMessages(p.displayName);
@@ -379,7 +416,7 @@ export class PeerController {
         const payload = msg.payload as PeerLeftPayload;
         this.logger.warn("PROTOCOL", `Peer offline: '${payload.displayName}' (${payload.reason})`);
         this.onlinePeers.delete(payload.displayName);
-        this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+        this.emitPeerLists();
         break;
       }
     }
@@ -448,26 +485,31 @@ export class PeerController {
    */
   public resolvePeerContact(target: string): PeerInfo | null {
     // 1. Thử tìm trực tiếp theo nodeId hoặc key trong onlinePeers
-    let peer = this.onlinePeers.get(target);
-    if (peer) return peer;
+    let peer = this.onlinePeers.get(target) || this.onlinePeers.get(target.toLowerCase());
+    if (peer && !this.isSelfPeer(peer)) return peer;
 
     // 2. Thử tìm theo displayName trong onlinePeers
     for (const p of this.onlinePeers.values()) {
-      if (p.displayName === target) {
+      if (p.displayName === target && !this.isSelfPeer(p)) {
         return p;
       }
     }
 
     // 3. Thử tìm trong DHT Routing Table
-    peer = this.dht.getKnownPeers().find((p) => p.nodeId === target || p.displayName === target);
+    peer = this.dht
+      .getKnownPeers()
+      .find((p) => !this.isSelfPeer(p) && (p.nodeId?.toLowerCase() === target.toLowerCase() || p.displayName === target));
     if (peer) {
-      this.onlinePeers.set(peer.nodeId || peer.displayName, peer);
+      this.onlinePeers.set(this.getPeerKey(peer), peer);
       return peer;
     }
 
     // 4. Thử tìm trong SQLite store
-    peer = this.store.getPeer(target) || undefined;
-    return peer || null;
+    const stored = this.store.getPeer(target);
+    if (stored && !this.isSelfPeer(stored) && stored.displayName !== this.displayName) {
+      return stored;
+    }
+    return null;
   }
 
   /**
@@ -485,6 +527,7 @@ export class PeerController {
 
     for (const p of all) {
       if (
+        !this.isSelfPeer(p) &&
         p.displayName !== this.displayName &&
         p.displayName !== excludeTarget &&
         !excludeRoutes.includes(p.displayName) &&
@@ -752,6 +795,33 @@ export class PeerController {
         "ROUTING",
         `❌ [RELAY FAILED] Node '${this.displayName}' không thể tìm thấy đường chuyển tiếp tới '${finalReceiver}'. Gói tin bị hủy.`
       );
+      if (innerMessage.type === MessageType.CHAT && originSender !== this.displayName) {
+        const originContact = this.resolvePeerContact(originSender);
+        const ackTargetIp = originContact?.ip || from?.ip;
+        const ackTargetPort = originContact?.tcpPort || from?.port;
+        if (ackTargetIp && ackTargetPort) {
+          const dropAck: BaseMessage<RelayAckPayload> = {
+            type: MessageType.RELAY_ACK,
+            message_id: crypto.randomUUID(),
+            sender: this.displayName,
+            receiver: originSender,
+            seq: 0,
+            timestamp: Date.now(),
+            payload: {
+              relaySessionId,
+              originSender,
+              finalReceiver,
+              status: "DROPPED",
+              hopCount,
+              reason: "TARGET_UNREACHABLE",
+              innerMessageId: innerMessage.message_id
+            },
+            nonce: null,
+            mac_or_signature: null
+          };
+          this.channel.sendMessage(ackTargetIp, ackTargetPort, dropAck).catch(() => {});
+        }
+      }
     }
   }
 
@@ -778,6 +848,25 @@ export class PeerController {
     // 2. Nếu là gói tin định tuyến RELAY_FORWARD, chuyển cho Relay Router xử lý
     if (msg.type === MessageType.RELAY_FORWARD) {
       await this.handleRelayForwardMessage(msg.payload as RelayForwardPayload, from);
+      return;
+    }
+
+    // 2b. Nếu node trung gian báo chuyển tiếp thất bại (target vừa tắt trước khi DHT kịp đánh dấu offline) -> fallback Mailbox
+    if (msg.type === MessageType.RELAY_ACK) {
+      const ack = msg.payload as RelayAckPayload;
+      if (ack.status === "DROPPED" && ack.innerMessageId) {
+        const rec = this.store.getMessage(ack.innerMessageId);
+        if (rec && rec.direction === "out" && rec.status !== "delivered") {
+          this.logger.warn(
+            "ROUTING",
+            `⚠️ [RELAY DROPPED] Peer trung gian '${msg.sender}' không liên lạc được '${ack.finalReceiver}'. Chuyển tin nhắn ${rec.message_id} sang Distributed Mailbox trên DHT...`
+          );
+          this.store.updateMessageStatus(rec.message_id, "pending");
+          rec.status = "pending";
+          this.emitUI("MESSAGE_STATUS_UPDATE", { message_id: rec.message_id, status: "pending" });
+          await this.depositToDistributedMailbox(rec);
+        }
+      }
       return;
     }
 
@@ -1099,15 +1188,16 @@ export class PeerController {
    * Truy vấn Distributed Mailbox trên DHT để kéo các tin nhắn gửi cho mình khi offline
    */
   public async checkDistributedMailbox(): Promise<number> {
+    if (this.isCheckingMailbox || this.isClosing) return 0;
+    this.isCheckingMailbox = true;
     const mailboxKey = getMailboxKey(this.displayName);
     try {
-      const res = await this.dht.findValue(mailboxKey);
-      if (!res.found || !res.value || res.value.type !== "mailbox" || !Array.isArray(res.value.messages)) {
+      const res = await this.dht.fetchMailbox(mailboxKey);
+      if (!res.found || !Array.isArray(res.messages) || res.messages.length === 0) {
         return 0;
       }
 
-      const messages: MailboxMessage[] = res.value.messages;
-      if (messages.length === 0) return 0;
+      const messages: MailboxMessage[] = res.messages;
 
       this.logger.info(
         "DHT",
@@ -1115,6 +1205,7 @@ export class PeerController {
       );
 
       let newCount = 0;
+      const onlinePeers = this.getOnlinePeers();
       for (const msg of messages) {
         if (msg.lamport_clock !== undefined && msg.lamport_clock !== null) {
           this.lamportClock.update(msg.lamport_clock);
@@ -1153,11 +1244,15 @@ export class PeerController {
           this.emitUI("NEW_MESSAGE", record);
         }
 
-        // Nếu người gửi đang online, gửi CHAT_ACK trực tiếp cho người gửi
-        const senderPeer = this.resolvePeerContact(msg.sender);
-        if (senderPeer) {
+        // Chỉ gửi CHAT_ACK trực tiếp nếu người gửi hiện đang online
+        const isSenderOnline = onlinePeers.some((p) => p.displayName === msg.sender);
+        if (isSenderOnline) {
           this.sendChatAck(msg.sender, msg.message_id).catch(() => {});
         }
+      }
+
+      if (newCount > 0) {
+        this.emitPeerLists();
       }
 
       // Xóa các tin nhắn đã đọc khỏi Distributed Mailbox trên DHT
@@ -1171,6 +1266,8 @@ export class PeerController {
     } catch (err: any) {
       this.logger.warn("DHT", `Lỗi khi kiểm tra Distributed Mailbox: ${err.message}`);
       return 0;
+    } finally {
+      this.isCheckingMailbox = false;
     }
   }
 
@@ -1242,18 +1339,59 @@ export class PeerController {
   }
 
   public getOnlinePeers(): PeerInfo[] {
-    if (this.discoveryMode === "dht" || this.onlinePeers.size === 0) {
+    if (this.discoveryMode === "dht") {
+      const dhtPeers = this.dht.getKnownPeers().filter((p) => !this.isSelfPeer(p));
+      this.onlinePeers.clear();
+      for (const p of dhtPeers) {
+        this.onlinePeers.set(this.getPeerKey(p), p);
+      }
+    } else if (this.discoveryMode === "hybrid" || this.onlinePeers.size === 0) {
       const dhtPeers = this.dht.getKnownPeers();
       for (const p of dhtPeers) {
-        const isSelf = (p.nodeId && p.nodeId.toLowerCase() === this.nodeId.toLowerCase()) ||
-          (p.ip === this.ip && p.tcpPort === this.tcpPort);
-        const peerKey = p.nodeId || p.displayName;
-        if (!isSelf && !this.onlinePeers.has(peerKey)) {
+        const peerKey = this.getPeerKey(p);
+        if (!this.isSelfPeer(p) && !this.onlinePeers.has(peerKey)) {
           this.onlinePeers.set(peerKey, p);
         }
       }
     }
     return Array.from(this.onlinePeers.values());
+  }
+
+  /**
+   * Trả về danh sách đầy đủ các Peer cho UI Sidebar:
+   * bao gồm cả peer đang ONLINE (online: true) và peer từng biết / từng chat nhưng hiện OFFLINE (online: false).
+   */
+  public getKnownPeersForUI(): PeerInfo[] {
+    const online = this.getOnlinePeers();
+    const onlineList: PeerInfo[] = online.map((p) => ({ ...p, online: true }));
+    const seenNames = new Set(onlineList.map((p) => p.displayName));
+    const seenIds = new Set(onlineList.filter((p) => p.nodeId).map((p) => p.nodeId!.toLowerCase()));
+
+    const offlineList: PeerInfo[] = [];
+
+    for (const p of this.store.getKnownPeers()) {
+      if (this.isSelfPeer(p) || p.displayName === this.displayName) continue;
+      if (seenNames.has(p.displayName)) continue;
+      if (p.nodeId && seenIds.has(p.nodeId.toLowerCase())) continue;
+
+      seenNames.add(p.displayName);
+      if (p.nodeId) seenIds.add(p.nodeId.toLowerCase());
+      offlineList.push({ ...p, online: false });
+    }
+
+    for (const convPeer of this.store.getConversationPeers()) {
+      if (convPeer === this.displayName || seenNames.has(convPeer)) continue;
+      seenNames.add(convPeer);
+      offlineList.push({
+        displayName: convPeer,
+        ip: "offline",
+        tcpPort: 0,
+        online: false
+      });
+    }
+
+    offlineList.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+    return [...onlineList, ...offlineList];
   }
 
   public getPublicKey(): string {
@@ -1267,7 +1405,7 @@ export class PeerController {
   public async healPartition(): Promise<boolean> {
     const healed = await this.dht.healPartition();
     if (healed) {
-      this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
+      this.emitPeerLists();
       await this.checkDistributedMailbox();
     }
     return healed;

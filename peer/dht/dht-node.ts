@@ -86,6 +86,9 @@ export class DhtNode {
   private maintenanceTimer: NodeJS.Timeout | null = null;
   private republishTimer: NodeJS.Timeout | null = null;
   private healingTimer: NodeJS.Timeout | null = null;
+  private maintenancePromise: Promise<void> | null = null;
+  private healingPromise: Promise<boolean> | null = null;
+  private verifyingEndpoints: Set<string> = new Set();
   private isClosing = false;
 
   constructor(opts: DhtNodeOptions) {
@@ -298,12 +301,19 @@ export class DhtNode {
     const initialPeers: PeerInfo[] = [];
     for (const peer of bootstrapPeers) {
       // Bỏ qua nếu là chính mình
-      if (peer.ip === this.localInfo.ip && peer.port === this.localInfo.tcpPort) continue;
+      if (
+        peer.ip.trim().toLowerCase() === this.localInfo.ip.trim().toLowerCase() &&
+        peer.port === this.localInfo.tcpPort
+      ) {
+        continue;
+      }
 
       const pong = await this.sendPing(peer.ip, peer.port);
-      if (pong) {
+      if (pong && !this.isSelfPeer(pong)) {
         initialPeers.push(pong);
         this.addOrUpdateContact(pong);
+      } else if (pong && this.isSelfPeer(pong)) {
+        this.knownBootstrapPool.delete(this.getEndpointKey(peer.ip, peer.port));
       }
     }
 
@@ -364,11 +374,11 @@ export class DhtNode {
         const payload = msg.payload as DhtFindNodePayload;
         this.addOrUpdateContact(payload.senderInfo);
 
-        // Tìm K nodes gần nhất với targetNodeId trong routing table
+        // Tìm K nodes gần nhất với targetNodeId trong routing table (chỉ trả về các node khỏe mạnh)
         const closestContacts = this.routingTable.getClosestNodes(payload.targetNodeId, this.routingTable.kSize);
         // Loại bỏ người gửi khỏi danh sách trả về
         const closestPeers: PeerInfo[] = closestContacts
-          .filter((c) => c.nodeId.toLowerCase() !== payload.senderNodeId.toLowerCase())
+          .filter((c) => c.nodeId.toLowerCase() !== payload.senderNodeId.toLowerCase() && c.failedPings === 0)
           .map((c) => ({
             displayName: c.displayName,
             ip: c.ip,
@@ -388,7 +398,8 @@ export class DhtNode {
           payload: {
             req_id: msg.message_id,
             targetNodeId: payload.targetNodeId,
-            nodes: closestPeers
+            nodes: closestPeers,
+            responderInfo: this.localInfo
           },
           nonce: null,
           mac_or_signature: null
@@ -402,11 +413,11 @@ export class DhtNode {
 
       case MessageType.DHT_FIND_NODE_RESP: {
         const payload = msg.payload as DhtFindNodeRespPayload;
-        // Bổ sung các node nhận được vào routing table
-        for (const peer of payload.nodes) {
-          this.addOrUpdateContact(peer);
+        // Chỉ thêm trực tiếp node đã trực tiếp phản hồi (verified), KHÔNG thêm mù quáng gossip từ bên thứ 3
+        if (payload.responderInfo) {
+          this.addOrUpdateContact(payload.responderInfo);
         }
-        this.resolvePending(payload.req_id, payload.nodes);
+        this.resolvePending(payload.req_id, payload);
         return true;
       }
 
@@ -498,7 +509,23 @@ export class DhtNode {
           incomingVersion
         );
 
-        this.logger.info("DHT", `Đã lưu trữ DHT key '${payload.key.substring(0, 10)}...' từ ${payload.publisher} (Đã bền vững vào SQLite)`);
+        if (valueToStore && valueToStore.type === "mailbox" && Array.isArray(valueToStore.messages)) {
+          const recipientName = valueToStore.recipient || "unknown";
+          const incomingCount = Array.isArray(payload.value?.messages) ? payload.value.messages.length : 0;
+          if (incomingCount === 0) {
+            this.logger.info(
+              "DHT",
+              `📬 [DISTRIBUTED MAILBOX] Đã dọn sạch hộp thư offline của '${recipientName}' theo yêu cầu từ '${payload.publisher}' (Key: ${payload.key.substring(0, 10)}...)`
+            );
+          } else {
+            this.logger.info(
+              "DHT",
+              `📬 [DISTRIBUTED MAILBOX] Đã lưu trữ hộ ${valueToStore.messages.length} tin nhắn offline cho '${recipientName}' từ '${payload.publisher}' (Key: ${payload.key.substring(0, 10)}..., SQLite)`
+            );
+          }
+        } else {
+          this.logger.info("DHT", `Đã lưu trữ DHT key '${payload.key.substring(0, 10)}...' từ ${payload.publisher} (Đã bền vững vào SQLite)`);
+        }
 
         const ackMsg: BaseMessage<DhtStoreAckPayload> = {
           type: MessageType.DHT_STORE_ACK,
@@ -551,11 +578,14 @@ export class DhtNode {
             req_id: msg.message_id,
             key: payload.key,
             found: true,
-            value: entry.value
+            value: entry.value,
+            responderInfo: this.localInfo
           };
         } else {
-          // Không có value: Trả về K node gần nhất với key
-          const closest = this.routingTable.getClosestNodes(payload.key, this.routingTable.kSize);
+          // Không có value: Trả về K node gần nhất với key (chỉ trả về các node khỏe mạnh)
+          const closest = this.routingTable
+            .getClosestNodes(payload.key, this.routingTable.kSize)
+            .filter((c) => c.nodeId.toLowerCase() !== payload.senderNodeId.toLowerCase() && c.failedPings === 0);
           respPayload = {
             req_id: msg.message_id,
             key: payload.key,
@@ -567,7 +597,8 @@ export class DhtNode {
               lastSeen: c.lastSeen,
               nodeId: c.nodeId,
               publicKey: c.publicKey
-            }))
+            })),
+            responderInfo: this.localInfo
           };
         }
 
@@ -591,10 +622,11 @@ export class DhtNode {
 
       case MessageType.DHT_FIND_VALUE_RESP: {
         const payload = msg.payload as DhtFindValueRespPayload;
-        if (!payload.found && payload.nodes) {
-          for (const peer of payload.nodes) {
-            this.addOrUpdateContact(peer);
-          }
+        if (payload.responderInfo) {
+          this.addOrUpdateContact(payload.responderInfo);
+        }
+        if (!payload.found && payload.nodes && payload.nodes.length > 0) {
+          void this.verifyDiscoveredPeers(payload.nodes);
         }
         this.resolvePending(payload.req_id, payload);
         return true;
@@ -605,19 +637,103 @@ export class DhtNode {
     }
   }
 
+  private getEndpointKey(ip: string, port: number): string {
+    return `${ip.trim().toLowerCase()}:${port}`;
+  }
+
+  private isSelfPeer(peer: { nodeId?: string; ip?: string; tcpPort?: number; publicKey?: string }): boolean {
+    if (peer.nodeId && peer.nodeId.toLowerCase() === this.localNodeId.toLowerCase()) {
+      return true;
+    }
+    if (peer.publicKey && this.publicKey && peer.publicKey === this.publicKey) {
+      return true;
+    }
+    if (
+      peer.ip &&
+      peer.tcpPort &&
+      peer.ip.trim().toLowerCase() === this.localInfo.ip.trim().toLowerCase() &&
+      peer.tcpPort === this.localInfo.tcpPort
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   /**
-   * Thêm hoặc cập nhật một peer vào routing table
+   * Xác thực các peer nhận qua gossip (FIND_NODE_RESP / FIND_VALUE_RESP) bằng PING trực tiếp
+   * trước khi thêm vào routing table để ngăn chặn peer chết hoặc định danh cũ quay lại.
+   */
+  private async verifyDiscoveredPeers(peers: PeerInfo[]): Promise<void> {
+    for (const peer of peers) {
+      if (this.isClosing) break;
+      if (!peer.displayName || !peer.ip || !peer.tcpPort) continue;
+      if (this.isSelfPeer(peer)) continue;
+
+      const nodeId =
+        peer.nodeId || (peer.publicKey ? generateNodeIdFromPublicKey(peer.publicKey) : generateNodeId(peer.displayName));
+      const existingById = this.routingTable.get(nodeId);
+      if (existingById && existingById.failedPings === 0) {
+        continue;
+      }
+
+      const epKey = this.getEndpointKey(peer.ip, peer.tcpPort);
+      const existingAtEndpoint = this.routingTable
+        .getAll()
+        .find((c) => this.getEndpointKey(c.ip, c.tcpPort) === epKey);
+      if (
+        existingAtEndpoint &&
+        existingAtEndpoint.failedPings === 0 &&
+        Date.now() - (existingAtEndpoint.lastSeen || 0) < 5000
+      ) {
+        continue;
+      }
+
+      if (this.verifyingEndpoints.has(epKey)) continue;
+      this.verifyingEndpoints.add(epKey);
+      try {
+        const pong = await this.sendPing(peer.ip, peer.tcpPort);
+        if (pong && this.isSelfPeer(pong)) {
+          this.knownBootstrapPool.delete(epKey);
+        }
+      } finally {
+        this.verifyingEndpoints.delete(epKey);
+      }
+    }
+  }
+
+  /**
+   * Thêm hoặc cập nhật một peer đã xác thực trực tiếp vào routing table
    */
   public addOrUpdateContact(peer: PeerInfo): void {
-    if (!peer.displayName) return;
-    
+    if (!peer.displayName || !peer.ip || !peer.tcpPort) return;
+
     // Chuẩn P2P: Node ID được sinh từ SHA1(PublicKey) thay vì SHA1(displayName)
     const nodeId = peer.nodeId || (peer.publicKey ? generateNodeIdFromPublicKey(peer.publicKey) : generateNodeId(peer.displayName));
 
-    // Không thêm chính bản thân mình vào routing table (kiểm tra theo nodeId hoặc cặp IP:Port)
-    const isSelf = nodeId.toLowerCase() === this.localNodeId.toLowerCase() ||
-      (peer.ip === this.localInfo.ip && peer.tcpPort === this.localInfo.tcpPort);
-    if (isSelf) return;
+    // Không thêm chính bản thân mình vào routing table (kiểm tra theo nodeId, publicKey hoặc cặp IP:Port)
+    if (this.isSelfPeer({ ...peer, nodeId })) return;
+
+    const epKey = this.getEndpointKey(peer.ip, peer.tcpPort);
+
+    // Một endpoint ip:tcpPort tại một thời điểm chỉ thuộc về 1 Node ID đang chạy:
+    // loại bỏ mọi Node ID cũ (stale/zombie) từng dùng chung ip:tcpPort này.
+    const staleAtEndpoint = this.routingTable
+      .getAll()
+      .filter(
+        (c) =>
+          this.getEndpointKey(c.ip, c.tcpPort) === epKey &&
+          c.nodeId.toLowerCase() !== nodeId.toLowerCase()
+      );
+
+    for (const stale of staleAtEndpoint) {
+      if (this.routingTable.remove(stale.nodeId)) {
+        this.logger.warn(
+          "DHT",
+          `[DHT REPLACED] Thay thế định danh cũ '${stale.displayName}' (${stale.ip}:${stale.tcpPort}) [ID: ${stale.nodeId.substring(0, 8)}...] bằng định danh mới [ID: ${nodeId.substring(0, 8)}...].`
+        );
+        this.emitPeerLeft(stale);
+      }
+    }
 
     const contact: DhtContact = {
       nodeId,
@@ -630,12 +746,17 @@ export class DhtNode {
     };
 
     // Ghi nhận vào pool known bootstrap để phục vụ tự động hàn gắn phân mảnh mạng
-    this.knownBootstrapPool.set(`${peer.ip}:${peer.tcpPort}`, { ip: peer.ip, port: peer.tcpPort });
+    this.knownBootstrapPool.set(epKey, { ip: peer.ip, port: peer.tcpPort });
 
     const isExisting = !!this.routingTable.get(nodeId);
     const result = this.routingTable.addOrUpdate(contact);
 
-    if (result && (result.status === "ADDED" || (!isExisting && result.status === "UPDATED"))) {
+    if (
+      result &&
+      (result.status === "ADDED" ||
+        result.status === "EVICTED_AND_ADDED" ||
+        (!isExisting && result.status === "UPDATED"))
+    ) {
       this.logger.info(
         "DHT",
         `[DHT DISCOVERY] Phát hiện Peer mới: '${peer.displayName}' (${peer.ip}:${peer.tcpPort}) [ID: ${nodeId.substring(0, 8)}...]`
@@ -694,6 +815,15 @@ export class DhtNode {
    * Gửi RPC DHT_FIND_NODE tới một node cụ thể
    */
   public async sendFindNode(ip: string, port: number, targetNodeId: string): Promise<PeerInfo[]> {
+    const res = await this.sendFindNodeInternal(ip, port, targetNodeId);
+    return res.nodes;
+  }
+
+  private async sendFindNodeInternal(
+    ip: string,
+    port: number,
+    targetNodeId: string
+  ): Promise<{ ok: boolean; nodes: PeerInfo[]; responderInfo?: PeerInfo }> {
     const msgId = crypto.randomUUID();
     const msg: BaseMessage<DhtFindNodePayload> = {
       type: MessageType.DHT_FIND_NODE,
@@ -712,13 +842,16 @@ export class DhtNode {
     };
 
     const sent = await this.channel.sendMessage(ip, port, msg);
-    if (!sent) return [];
+    if (!sent) return { ok: false, nodes: [] };
 
     try {
-      const nodes = await this.waitForResponse<PeerInfo[]>(msgId, this.rpcTimeoutMs);
-      return nodes || [];
+      const resp = await this.waitForResponse<DhtFindNodeRespPayload | PeerInfo[]>(msgId, this.rpcTimeoutMs);
+      if (Array.isArray(resp)) {
+        return { ok: true, nodes: resp };
+      }
+      return { ok: true, nodes: resp?.nodes || [], responderInfo: resp?.responderInfo };
     } catch {
-      return [];
+      return { ok: false, nodes: [] };
     }
   }
 
@@ -729,7 +862,10 @@ export class DhtNode {
   public async iterativeFindNode(targetNodeId: string): Promise<PeerInfo[]> {
     const targetNorm = targetNodeId.toLowerCase();
     const queriedIds = new Set<string>();
-    queriedIds.add(this.localNodeId);
+    const queriedEndpoints = new Set<string>();
+    const respondedEndpoints = new Set<string>();
+    queriedIds.add(this.localNodeId.toLowerCase());
+    queriedEndpoints.add(this.getEndpointKey(this.localInfo.ip, this.localInfo.tcpPort));
 
     // Lấy shortlist ban đầu từ routing table
     let shortlist = this.routingTable.getClosestNodes(targetNorm, this.routingTable.kSize);
@@ -738,32 +874,85 @@ export class DhtNode {
     let hasCloser = true;
     let rounds = 0;
     const maxRounds = 8;
+    const discoveredExtras: PeerInfo[] = [];
 
     while (hasCloser && rounds < maxRounds) {
       rounds++;
       // Chọn ra tối đa alpha node chưa được truy vấn gần target nhất
-      const unqueried = shortlist.filter((c) => !queriedIds.has(c.nodeId.toLowerCase()));
+      const unqueried = shortlist.filter(
+        (c) =>
+          !queriedIds.has(c.nodeId.toLowerCase()) &&
+          !queriedEndpoints.has(this.getEndpointKey(c.ip, c.tcpPort))
+      );
       if (unqueried.length === 0) break;
 
       const candidates = unqueried.slice(0, this.alpha);
       for (const c of candidates) {
         queriedIds.add(c.nodeId.toLowerCase());
+        queriedEndpoints.add(this.getEndpointKey(c.ip, c.tcpPort));
       }
 
       // Gửi FIND_NODE đồng thời tới các ứng viên (alpha concurrency)
-      const promises = candidates.map((c) => this.sendFindNode(c.ip, c.tcpPort, targetNorm));
+      const promises = candidates.map((c) => this.sendFindNodeInternal(c.ip, c.tcpPort, targetNorm));
       const results = await Promise.all(promises);
 
       let foundNewNode = false;
-      for (const nodes of results) {
-        for (const peer of nodes) {
-          const pNodeId = peer.nodeId || (peer.publicKey ? generateNodeIdFromPublicKey(peer.publicKey) : generateNodeId(peer.displayName));
+      const deadCandidateIds = new Set<string>();
+
+      for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i];
+        const res = results[i];
+        const epKey = this.getEndpointKey(candidate.ip, candidate.tcpPort);
+
+        if (!res.ok) {
+          deadCandidateIds.add(candidate.nodeId.toLowerCase());
+          continue;
+        }
+
+        if (res.responderInfo && this.isSelfPeer(res.responderInfo)) {
+          deadCandidateIds.add(candidate.nodeId.toLowerCase());
+          this.knownBootstrapPool.delete(epKey);
+          continue;
+        }
+
+        respondedEndpoints.add(epKey);
+
+        if (res.responderInfo) {
+          const realId =
+            res.responderInfo.nodeId ||
+            (res.responderInfo.publicKey
+              ? generateNodeIdFromPublicKey(res.responderInfo.publicKey)
+              : generateNodeId(res.responderInfo.displayName));
+          queriedIds.add(realId.toLowerCase());
+          candidate.nodeId = realId;
+          candidate.displayName = res.responderInfo.displayName;
+        } else if (!this.routingTable.get(candidate.nodeId)) {
+          // Node phản hồi không kèm responderInfo (phiên bản cũ): ping xác thực trước khi thêm
+          const pong = await this.sendPing(candidate.ip, candidate.tcpPort);
+          if (!pong || this.isSelfPeer(pong)) {
+            deadCandidateIds.add(candidate.nodeId.toLowerCase());
+            continue;
+          }
+        }
+
+        for (const peer of res.nodes) {
+          if (this.isSelfPeer(peer)) continue;
+          const pNodeId =
+            peer.nodeId ||
+            (peer.publicKey ? generateNodeIdFromPublicKey(peer.publicKey) : generateNodeId(peer.displayName));
           if (pNodeId.toLowerCase() === this.localNodeId.toLowerCase()) continue;
 
-          this.addOrUpdateContact(peer);
+          const peerEp = this.getEndpointKey(peer.ip, peer.tcpPort);
+          // Bỏ qua gossip trùng lặp với endpoint vừa được truy vấn trực tiếp trong phiên lookup này
+          if (queriedEndpoints.has(peerEp)) continue;
 
-          // Nếu chưa có trong shortlist thì thêm vào
-          if (!shortlist.some((c) => c.nodeId.toLowerCase() === pNodeId.toLowerCase())) {
+          // Nếu chưa có nodeId hoặc endpoint này trong shortlist thì thêm vào để round sau kiểm tra trực tiếp
+          const alreadyInShortlist = shortlist.some(
+            (c) =>
+              c.nodeId.toLowerCase() === pNodeId.toLowerCase() ||
+              this.getEndpointKey(c.ip, c.tcpPort) === peerEp
+          );
+          if (!alreadyInShortlist) {
             foundNewNode = true;
             shortlist.push({
               nodeId: pNodeId,
@@ -778,6 +967,10 @@ export class DhtNode {
         }
       }
 
+      if (deadCandidateIds.size > 0) {
+        shortlist = shortlist.filter((c) => !deadCandidateIds.has(c.nodeId.toLowerCase()));
+      }
+
       // Sắp xếp lại shortlist theo khoảng cách XOR tới target
       shortlist.sort((a, b) => {
         const da = xorDistance(a.nodeId, targetNorm);
@@ -785,15 +978,34 @@ export class DhtNode {
         return da < db ? -1 : da > db ? 1 : 0;
       });
 
-      // Giới hạn K nodes tốt nhất
-      shortlist = shortlist.slice(0, this.routingTable.kSize);
+      // Giới hạn K nodes tốt nhất, các node bị loại vẫn xác thực nền nếu chưa có trong routingTable
+      if (shortlist.length > this.routingTable.kSize) {
+        discoveredExtras.push(...shortlist.slice(this.routingTable.kSize));
+        shortlist = shortlist.slice(0, this.routingTable.kSize);
+      }
 
-      if (!foundNewNode) {
+      const stillUnqueried = shortlist.some(
+        (c) =>
+          !queriedIds.has(c.nodeId.toLowerCase()) &&
+          !queriedEndpoints.has(this.getEndpointKey(c.ip, c.tcpPort))
+      );
+      if (!foundNewNode && !stillUnqueried) {
         hasCloser = false;
       }
     }
 
-    return shortlist.map((c) => ({
+    if (discoveredExtras.length > 0) {
+      void this.verifyDiscoveredPeers(discoveredExtras);
+    }
+
+    // Chỉ trả về các node đã xác thực trực tiếp hoặc đã tồn tại trong routingTable
+    const verifiedShortlist = shortlist.filter(
+      (c) =>
+        respondedEndpoints.has(this.getEndpointKey(c.ip, c.tcpPort)) ||
+        !!this.routingTable.get(c.nodeId)
+    );
+
+    return verifiedShortlist.map((c) => ({
       displayName: c.displayName,
       ip: c.ip,
       tcpPort: c.tcpPort,
@@ -931,6 +1143,99 @@ export class DhtNode {
    */
 
   /**
+   * Truy vấn Distributed Mailbox trên mạng DHT:
+   * Luôn hỏi các node lân cận trên mạng và hợp nhất (Set-Union) các tin nhắn nhận được,
+   * tránh bị kẹt bởi bản ghi mailbox rỗng cũ lưu cục bộ trong SQLite.
+   */
+  public async fetchMailbox(mailboxKey: string): Promise<{
+    found: boolean;
+    foundRemote: boolean;
+    recipient?: string;
+    messages: MailboxMessage[];
+  }> {
+    const mergedMap = new Map<string, MailboxMessage>();
+    let recipient: string | undefined;
+    let foundRemote = false;
+
+    const closest = this.routingTable.getClosestNodes(mailboxKey, this.routingTable.kSize);
+    if (closest.length > 0) {
+      const results = await Promise.all(
+        closest.map(async (contact) => {
+          const msgId = crypto.randomUUID();
+          const req: BaseMessage<DhtFindValuePayload> = {
+            type: MessageType.DHT_FIND_VALUE,
+            message_id: msgId,
+            sender: this.localInfo.displayName,
+            receiver: contact.displayName,
+            seq: 0,
+            timestamp: Date.now(),
+            payload: {
+              key: mailboxKey,
+              senderNodeId: this.localNodeId,
+              senderInfo: this.localInfo
+            },
+            nonce: null,
+            mac_or_signature: null
+          };
+
+          const sent = await this.channel.sendMessage(contact.ip, contact.tcpPort, req);
+          if (!sent) return null;
+
+          try {
+            return await this.waitForResponse<DhtFindValueRespPayload>(msgId, this.rpcTimeoutMs);
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      for (const resp of results) {
+        if (resp && resp.found && resp.value && resp.value.type === "mailbox" && Array.isArray(resp.value.messages)) {
+          foundRemote = true;
+          if (!recipient && resp.value.recipient) {
+            recipient = resp.value.recipient;
+          }
+          for (const m of resp.value.messages as MailboxMessage[]) {
+            if (m && m.message_id) {
+              mergedMap.set(m.message_id, m);
+            }
+          }
+        }
+      }
+    }
+
+    if (!foundRemote) {
+      let local = this.storage.get(mailboxKey);
+      if (!local && this.persistentStore) {
+        local = this.persistentStore.getDhtRecord(mailboxKey) || undefined;
+      }
+      if (
+        local &&
+        local.expiresAt > Date.now() &&
+        local.value &&
+        local.value.type === "mailbox" &&
+        Array.isArray(local.value.messages)
+      ) {
+        if (!recipient && local.value.recipient) {
+          recipient = local.value.recipient;
+        }
+        for (const m of local.value.messages as MailboxMessage[]) {
+          if (m && m.message_id) {
+            mergedMap.set(m.message_id, m);
+          }
+        }
+      }
+    }
+
+    return {
+      found: foundRemote || mergedMap.size > 0,
+      foundRemote,
+      recipient,
+      messages: Array.from(mergedMap.values())
+    };
+  }
+
+  /**
    * Lưu một tin nhắn offline vào Distributed Mailbox của người nhận trên DHT.
    * Dữ liệu được replicate trên K node gần hash(receiver) nhất.
    */
@@ -939,21 +1244,9 @@ export class DhtNode {
     message: MailboxMessage,
     ttlMs: number = 24 * 3600 * 1000
   ): Promise<boolean> {
-    // 1. Lấy mailbox hiện tại nếu có
-    let messages: MailboxMessage[] = [];
-    let local = this.storage.get(mailboxKey);
-    if (!local && this.persistentStore) {
-      local = this.persistentStore.getDhtRecord(mailboxKey) || undefined;
-    }
-
-    if (local && local.value && local.value.type === "mailbox" && Array.isArray(local.value.messages)) {
-      messages = [...local.value.messages];
-    } else {
-      const remote = await this.findValue(mailboxKey);
-      if (remote.found && remote.value && remote.value.type === "mailbox" && Array.isArray(remote.value.messages)) {
-        messages = [...remote.value.messages];
-      }
-    }
+    // 1. Lấy mailbox hiện tại trên mạng DHT (hoặc local nếu mạng chưa có node nào khác)
+    const current = await this.fetchMailbox(mailboxKey);
+    const messages: MailboxMessage[] = [...current.messages];
 
     // Chống trùng lặp theo message_id
     if (!messages.some((m) => m.message_id === message.message_id)) {
@@ -981,6 +1274,8 @@ export class DhtNode {
       messages: []
     };
     const storedCount = await this.store(mailboxKey, emptyMailbox, 3600000);
+    // Không lưu bản ghi mailbox rỗng cục bộ của chính mình để tránh che mất truy vấn mạng ở lần khởi động sau
+    this.deleteFromStorage(mailboxKey);
     return storedCount > 0;
   }
 
@@ -1077,11 +1372,20 @@ export class DhtNode {
     if (nameKey !== this.localNodeId) {
       // Identity Consensus: Kiểm tra xung đột tên (Name Collision)
       const existing = await this.findValue(nameKey);
+      const isSameEndpoint =
+        existing.found &&
+        existing.value &&
+        existing.value.ip &&
+        existing.value.tcpPort &&
+        this.getEndpointKey(existing.value.ip, existing.value.tcpPort) ===
+          this.getEndpointKey(this.localInfo.ip, this.localInfo.tcpPort);
+
       if (
         existing.found &&
         existing.value &&
         existing.value.nodeId &&
-        existing.value.nodeId.toLowerCase() !== this.localNodeId.toLowerCase()
+        existing.value.nodeId.toLowerCase() !== this.localNodeId.toLowerCase() &&
+        !isSameEndpoint
       ) {
         this.logger.warn(
           "DHT",
@@ -1100,35 +1404,80 @@ export class DhtNode {
   private startMaintenanceLoop(): void {
     if (this.maintenanceTimer) clearInterval(this.maintenanceTimer);
 
-    this.maintenanceTimer = setInterval(async () => {
-      if (this.isClosing) return;
-      await this.runMaintenance();
+    this.maintenanceTimer = setInterval(() => {
+      if (this.isClosing || this.maintenancePromise) return;
+      this.runMaintenance().catch(() => {});
     }, this.pingIntervalMs);
   }
 
   public async runMaintenance(): Promise<void> {
-    const contacts = this.routingTable.getAll();
+    while (this.maintenancePromise) {
+      await this.maintenancePromise;
+    }
+    if (this.isClosing) return;
 
-    for (const contact of contacts) {
-      if (this.isClosing) break;
-
-      const pong = await this.sendPing(contact.ip, contact.tcpPort);
-      if (pong) {
-        contact.failedPings = 0;
-        contact.lastSeen = Date.now();
-      } else {
-        contact.failedPings += 1;
-        // Nếu 2 lần liên tiếp không nhận được PONG -> Coi như peer đã ngắt kết nối
-        if (contact.failedPings >= 2) {
-          this.logger.warn(
-            "DHT",
-            `[DHT LIVENESS] Peer '${contact.displayName}' không phản hồi sau ${contact.failedPings} lần ping. Đánh dấu OFFLINE.`
-          );
-          this.routingTable.remove(contact.nodeId);
-          this.emitPeerLeft(contact);
-        }
+    const run = this.executeMaintenance();
+    this.maintenancePromise = run;
+    try {
+      await run;
+    } finally {
+      if (this.maintenancePromise === run) {
+        this.maintenancePromise = null;
       }
     }
+  }
+
+  private async executeMaintenance(): Promise<void> {
+    const contacts = this.routingTable.getAll();
+
+    await Promise.all(
+      contacts.map(async (contact) => {
+        if (this.isClosing) return;
+
+        const pong = await this.sendPing(contact.ip, contact.tcpPort);
+        if (this.isClosing) return;
+
+        if (pong) {
+          const epKey = this.getEndpointKey(contact.ip, contact.tcpPort);
+          if (this.isSelfPeer(pong)) {
+            this.knownBootstrapPool.delete(epKey);
+            if (this.routingTable.remove(contact.nodeId)) {
+              this.emitPeerLeft(contact);
+            }
+            return;
+          }
+
+          const pongNodeId = pong.nodeId?.toLowerCase();
+          const expectedNodeId = contact.nodeId.toLowerCase();
+          if (pongNodeId && pongNodeId !== expectedNodeId) {
+            // Endpoint hiện do Node ID khác nắm giữ -> loại bỏ Node ID cũ ngay lập tức
+            if (this.routingTable.remove(contact.nodeId)) {
+              this.logger.warn(
+                "DHT",
+                `[DHT LIVENESS] Peer '${contact.displayName}' (${contact.ip}:${contact.tcpPort}) đã đổi Node ID (${expectedNodeId.substring(0, 8)}... -> ${pongNodeId.substring(0, 8)}...). Xóa định danh cũ.`
+              );
+              this.emitPeerLeft(contact);
+            }
+            return;
+          }
+
+          contact.failedPings = 0;
+          contact.lastSeen = Date.now();
+        } else {
+          contact.failedPings += 1;
+          // Nếu 2 lần liên tiếp không nhận được PONG -> Coi như peer đã ngắt kết nối
+          if (contact.failedPings >= 2) {
+            if (this.routingTable.remove(contact.nodeId)) {
+              this.logger.warn(
+                "DHT",
+                `[DHT LIVENESS] Peer '${contact.displayName}' không phản hồi sau ${contact.failedPings} lần ping. Đánh dấu OFFLINE.`
+              );
+              this.emitPeerLeft(contact);
+            }
+          }
+        }
+      })
+    );
 
     // Dọn dẹp storage các bản ghi hết hạn (RAM + SQLite)
     const now = Date.now();
@@ -1182,6 +1531,23 @@ export class DhtNode {
    * Khi đường truyền phục hồi, tự động ping tái kết nối, hợp nhất routing table và kéo lại dữ liệu.
    */
   public async healPartition(): Promise<boolean> {
+    while (this.healingPromise) {
+      await this.healingPromise;
+    }
+    if (this.isClosing) return false;
+
+    const run = this.executeHealPartition();
+    this.healingPromise = run;
+    try {
+      return await run;
+    } finally {
+      if (this.healingPromise === run) {
+        this.healingPromise = null;
+      }
+    }
+  }
+
+  private async executeHealPartition(): Promise<boolean> {
     if (this.isClosing) return false;
 
     const activeContacts = this.routingTable.getAll();
@@ -1189,8 +1555,15 @@ export class DhtNode {
 
     // 1. Kiểm tra bootstrap peers được cấu hình ban đầu
     for (const bp of this.bootstrapPeers) {
-      if (bp.ip === this.localInfo.ip && bp.port === this.localInfo.tcpPort) continue;
-      const isActive = activeContacts.some((c) => c.ip === bp.ip && c.tcpPort === bp.port);
+      if (
+        bp.ip.trim().toLowerCase() === this.localInfo.ip.trim().toLowerCase() &&
+        bp.port === this.localInfo.tcpPort
+      ) {
+        continue;
+      }
+      const isActive = activeContacts.some(
+        (c) => this.getEndpointKey(c.ip, c.tcpPort) === this.getEndpointKey(bp.ip, bp.port)
+      );
       if (!isActive) {
         missingCandidates.push(bp);
       }
@@ -1198,9 +1571,15 @@ export class DhtNode {
 
     // 2. Kiểm tra known peers trong pool lịch sử (cho phép seed node cũng hàn gắn được)
     for (const kp of this.knownBootstrapPool.values()) {
-      if (kp.ip === this.localInfo.ip && kp.port === this.localInfo.tcpPort) continue;
-      const isActive = activeContacts.some((c) => c.ip === kp.ip && c.tcpPort === kp.port);
-      const isAlready = missingCandidates.some((m) => m.ip === kp.ip && m.port === kp.port);
+      if (
+        kp.ip.trim().toLowerCase() === this.localInfo.ip.trim().toLowerCase() &&
+        kp.port === this.localInfo.tcpPort
+      ) {
+        continue;
+      }
+      const kpKey = this.getEndpointKey(kp.ip, kp.port);
+      const isActive = activeContacts.some((c) => this.getEndpointKey(c.ip, c.tcpPort) === kpKey);
+      const isAlready = missingCandidates.some((m) => this.getEndpointKey(m.ip, m.port) === kpKey);
       if (!isActive && !isAlready) {
         missingCandidates.push(kp);
       }
@@ -1216,6 +1595,10 @@ export class DhtNode {
 
       const pong = await this.sendPing(candidate.ip, candidate.port);
       if (pong) {
+        if (this.isSelfPeer(pong)) {
+          this.knownBootstrapPool.delete(this.getEndpointKey(candidate.ip, candidate.port));
+          continue;
+        }
         this.logger.info(
           "DHT",
           `🩹 [PARTITION HEALING] Tái kết nối thành công với peer '${candidate.ip}:${candidate.port}' (${pong.displayName}). Đang hàn gắn 2 nửa mạng...`
@@ -1245,13 +1628,11 @@ export class DhtNode {
   private startPartitionHealingLoop(): void {
     if (this.healingTimer) clearInterval(this.healingTimer);
 
-    this.healingTimer = setInterval(async () => {
-      if (this.isClosing) return;
-      try {
-        await this.healPartition();
-      } catch (err: any) {
+    this.healingTimer = setInterval(() => {
+      if (this.isClosing || this.healingPromise) return;
+      this.healPartition().catch(() => {
         // Tránh unhandled rejection trong background interval
-      }
+      });
     }, this.partitionHealingIntervalMs);
   }
 

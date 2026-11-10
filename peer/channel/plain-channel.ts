@@ -16,6 +16,7 @@ export class PlainChannel implements IChannel {
   private receiveHandler: MessageHandler | null = null;
   // Connection Pool cho các socket gửi đi: key = "ip:port"
   private activeSockets: Map<string, net.Socket> = new Map();
+  private pendingConnections: Map<string, Promise<net.Socket>> = new Map();
   // Quản lý các socket kết nối đến để có thể đóng tức thì khi shutdown
   private incomingSockets: Set<net.Socket> = new Set();
   // Giả lập rớt mạng / firewall theo endpoint: "ip:port"
@@ -94,7 +95,14 @@ export class PlainChannel implements IChannel {
 
     if (!socket || socket.destroyed) {
       try {
-        socket = await this.connectToPeer(targetIp, targetPort);
+        let pending = this.pendingConnections.get(key);
+        if (!pending) {
+          pending = this.connectToPeer(targetIp, targetPort).finally(() => {
+            this.pendingConnections.delete(key);
+          });
+          this.pendingConnections.set(key, pending);
+        }
+        socket = await pending;
         this.activeSockets.set(key, socket);
       } catch (err: any) {
         this.logger.warn("NETWORK", `Không thể kết nối TCP tới peer ${key}: ${err.message}`);

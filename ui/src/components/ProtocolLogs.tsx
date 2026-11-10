@@ -22,6 +22,7 @@ interface ProtocolLogsProps {
   tcpPort?: number;
   activePeer?: string | null;
   activePeerInfo?: PeerInfo;
+  isPeerBlocked?: boolean;
   channelStatus?: string;
 }
 
@@ -35,6 +36,7 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
   tcpPort,
   activePeer,
   activePeerInfo,
+  isPeerBlocked = false,
   channelStatus = "Plaintext",
 }) => {
   const [selectedLog, setSelectedLog] = useState<ProtocolLogEntry | null>(null);
@@ -58,7 +60,7 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
   }, [logs]);
 
   const filteredLogs = useMemo(() => {
-    return logs.filter((log) => {
+    const matched = logs.filter((log) => {
       if (hideHeartbeats && isHeartbeatLog(log)) {
         return false;
       }
@@ -69,7 +71,11 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
         const sum = (log.summary || "").toUpperCase();
 
         if (categoryFilter === "DHT") {
-          const isDht = type.includes("DHT") || cat.includes("DHT") || sum.includes("DHT");
+          const isDht =
+            type.includes("DHT") ||
+            cat.includes("DHT") ||
+            sum.includes("DHT") ||
+            sum.includes("MAILBOX");
           if (!isDht) return false;
         } else if (categoryFilter === "ROUTING") {
           const isRouting =
@@ -112,6 +118,8 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
 
       return true;
     });
+    // Đảo ngược để log mới nhất luôn hiển thị trên đầu danh sách
+    return matched.reverse();
   }, [logs, hideHeartbeats, categoryFilter]);
 
   const handleCopyPayload = (id: string, details: any, e: React.MouseEvent) => {
@@ -226,7 +234,9 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
               </div>
               <div className="flex justify-between items-center py-2">
                 <span className="text-[#64748B]">Transport</span>
-                <span className="text-[#0F172A] font-medium">DIRECT TCP • 64KB</span>
+                <span className="text-[#0F172A] font-medium">
+                  {isPeerBlocked ? "MESH RELAY • 64KB" : "DIRECT TCP • 64KB"}
+                </span>
               </div>
             </div>
           </div>
@@ -323,7 +333,14 @@ export const ProtocolLogs: React.FC<ProtocolLogsProps> = ({
                     {/* Header Row: Time + Direction + Type */}
                     <div className="flex items-center justify-between text-[#64748B] mb-1 flex-wrap gap-1">
                       <span className="text-[12px] font-mono text-[#64748B]">
-                        {log.timeStr.substring(11, 19)}
+                        {log.timestamp
+                          ? new Date(log.timestamp).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                              hour12: false,
+                            })
+                          : log.timeStr.substring(11, 19)}
                       </span>
 
                       <div className="flex items-center space-x-1.5">
