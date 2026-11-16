@@ -28,8 +28,14 @@ services:
       - PEER_UI_PORT=3001
       - DISCOVERY_MODE=dht
       - BOOTSTRAP_PEERS=
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_NAME=p2p_network
+      - DB_USER=postgres
+      - DB_PASSWORD=27082005
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/app/data
       - ./downloads:/app/downloads
       - ./logs:/app/logs
     networks:
@@ -51,8 +57,14 @@ services:
       - PEER_UI_PORT=3002
       - DISCOVERY_MODE=dht
       - BOOTSTRAP_PEERS=peer-alice:8001,peer-charlie:8003
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_NAME=p2p_network
+      - DB_USER=postgres
+      - DB_PASSWORD=27082005
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/app/data
       - ./downloads:/app/downloads
       - ./logs:/app/logs
     networks:
@@ -74,8 +86,43 @@ services:
       - PEER_UI_PORT=3003
       - DISCOVERY_MODE=dht
       - BOOTSTRAP_PEERS=peer-bob:8002,peer-alice:8001
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_NAME=p2p_network
+      - DB_USER=postgres
+      - DB_PASSWORD=27082005
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/app/data
+      - ./downloads:/app/downloads
+      - ./logs:/app/logs
+    networks:
+      - p2p-net
+
+  peer-david:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: p2p-peer-david
+    command: npx tsx peer/index.ts
+    ports:
+      - "8004:8004"
+      - "3004:3004"
+    environment:
+      - PEER_NAME=David
+      - PEER_ADVERTISE_IP=peer-david
+      - PEER_TCP_PORT=8004
+      - PEER_UI_PORT=3004
+      - DISCOVERY_MODE=dht
+      - BOOTSTRAP_PEERS=peer-alice:8001,peer-bob:8002
+      - DB_HOST=host.docker.internal
+      - DB_PORT=5432
+      - DB_NAME=p2p_network
+      - DB_USER=postgres
+      - DB_PASSWORD=27082005
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
       - ./downloads:/app/downloads
       - ./logs:/app/logs
     networks:
@@ -84,4 +131,3 @@ services:
 networks:
   p2p-net:
     driver: bridge
-

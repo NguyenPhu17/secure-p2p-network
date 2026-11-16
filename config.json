@@ -10,6 +10,13 @@
     "defaultChunkSize": 65536,
     "reconnectIntervalMs": 5000,
     "maxLogEntries": 100
+  },
+  "database": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "database": "p2p_network",
+    "user": "postgres",
+    "password": "27082005",
+    "max": 10
   }
 }
-

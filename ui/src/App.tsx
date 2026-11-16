@@ -6,12 +6,34 @@ import { ChatArea } from "./components/ChatArea";
 import { ProtocolLogs } from "./components/ProtocolLogs";
 import { StatusBar } from "./components/StatusBar";
 import { AlertBanner } from "./components/AlertBanner";
+import { AuthUser, apiVerifyToken } from "./utils/authApi";
 
 export const App: React.FC = () => {
   const searchParams = new URLSearchParams(window.location.search);
   const paramPort = searchParams.get("port") ? parseInt(searchParams.get("port")!, 10) : null;
 
-  const [wsPort, setWsPort] = useState<number | null>(paramPort);
+  // Khôi phục user từ localStorage nếu có
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
+    try {
+      const saved = localStorage.getItem("p2p_current_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [wsPort, setWsPort] = useState<number | null>(() => {
+    if (paramPort) return paramPort;
+    try {
+      const saved = localStorage.getItem("p2p_current_user");
+      if (saved) {
+        const u: AuthUser = JSON.parse(saved);
+        return u.nodePort;
+      }
+    } catch {}
+    return null;
+  });
+
   const [isLogsOpen, setIsLogsOpen] = useState(true);
 
   const {
@@ -36,20 +58,48 @@ export const App: React.FC = () => {
     toggleFirewallBlock
   } = usePeerSocket(wsPort || 3001);
 
+  // Kiểm tra tính hợp lệ của JWT Token khi tải ứng dụng (Chống giả mạo localStorage)
+  useEffect(() => {
+    const token = localStorage.getItem("p2p_auth_token");
+    if (token && currentUser) {
+      apiVerifyToken(token, wsPort || 3001).then((res) => {
+        if (!res.valid) {
+          console.warn("[AUTH] JWT Token không hợp lệ hoặc đã hết hạn. Buộc đăng xuất.");
+          handleLogout();
+        }
+      });
+    }
+  }, []);
+
   useEffect(() => {
     if (activePeer) {
       loadHistory(activePeer);
     }
   }, [activePeer, loadHistory]);
 
-  if (!wsPort || !connected) {
+  const handleLoginSuccess = (user: AuthUser, token?: string) => {
+    setCurrentUser(user);
+    setWsPort(user.nodePort);
+    localStorage.setItem("p2p_current_user", JSON.stringify(user));
+    if (token) {
+      localStorage.setItem("p2p_auth_token", token);
+    }
+    window.history.replaceState({}, "", `?port=${user.nodePort}`);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("p2p_current_user");
+    localStorage.removeItem("p2p_auth_token");
+    setCurrentUser(null);
+    setWsPort(null);
+    window.history.replaceState({}, "", window.location.pathname);
+  };
+
+  if (!currentUser || !wsPort || !connected) {
     return (
       <LoginModal
         defaultPort={wsPort || 3001}
-        onConnect={(port) => {
-          setWsPort(port);
-          window.history.replaceState({}, "", `?port=${port}`);
-        }}
+        onLoginSuccess={handleLoginSuccess}
       />
     );
   }
@@ -69,12 +119,13 @@ export const App: React.FC = () => {
       <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Column 1: Peers List Sidebar */}
         <Sidebar
-          me={me}
+          me={currentUser.displayName || me}
           tcpPort={tcpPort}
           peers={knownPeers}
           blockedPeers={blockedPeers}
           activePeer={activePeer}
           onSelectPeer={(name) => setActivePeer(name)}
+          onLogout={handleLogout}
         />
 
         {/* Column 2: Chat & File Transfer Stream */}
@@ -97,7 +148,7 @@ export const App: React.FC = () => {
           logs={logs}
           isOpen={isLogsOpen}
           onToggle={() => setIsLogsOpen(!isLogsOpen)}
-          me={me}
+          me={currentUser.displayName || me}
           tcpPort={tcpPort}
           activePeer={activePeer}
           activePeerInfo={activePeerInfo}

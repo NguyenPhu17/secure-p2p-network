@@ -80,14 +80,14 @@ async function runPersistenceAndMailboxTest() {
   const storeCount = await alice.getDhtNode().store(testKey, testData, 3600000);
   console.log(`   - Dữ liệu đã replicate trên ${storeCount} node.`);
 
-  // Kiểm tra xem Charlie có nhận và lưu vào SQLite không
-  const charlieStored = charlie.getStore().getDhtRecord(testKey);
+  // Kiểm tra xem Charlie có nhận và lưu vào Database không
+  const charlieStored = await charlie.getStore().getDhtRecord(testKey);
   if (!charlieStored || charlieStored.value.bio !== testData.bio) {
-    throw new Error("[BƯỚC 2 FAILED] Charlie chưa nhận hoặc chưa lưu dữ liệu DHT vào SQLite!");
+    throw new Error("[BƯỚC 2 FAILED] Charlie chưa nhận hoặc chưa lưu dữ liệu DHT vào Database!");
   }
-  console.log(`   - Charlie đã lưu dữ liệu vào SQLite: bio='${charlieStored.value.bio}'`);
+  console.log(`   - Charlie đã lưu dữ liệu vào Database: bio='${charlieStored.value.bio}'`);
 
-  console.log("   Tắt Charlie và khởi động lại để kiểm tra phục hồi từ SQLite sau khi Restart...");
+  console.log("   Tắt Charlie và khởi động lại để kiểm tra phục hồi từ Database sau khi Restart...");
   await charlie.close();
 
   const charlieRevived = new PeerController({
@@ -165,7 +165,7 @@ async function runPersistenceAndMailboxTest() {
   console.log("   5. Đang chờ Bob tự động truy vấn Distributed Mailbox trên DHT và kéo tin về...");
   await new Promise((r) => setTimeout(r, 1200));
 
-  const bobHistory = bobRevived.getChatHistory("Alice");
+  const bobHistory = await bobRevived.getChatHistory("Alice");
   console.log(`   - Lịch sử tin nhắn của Bob với Alice: ${bobHistory.length} tin.`);
   for (const m of bobHistory) {
     console.log(`     + [${m.sender} ➔ ${m.receiver}]: "${m.body}" [Trạng thái: ${m.status}] [Relayed by: ${m.relayed_by}]`);

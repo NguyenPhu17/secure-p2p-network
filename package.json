@@ -12,13 +12,17 @@
     "test:persistence": "tsx tests/test-dht-persistence-mailbox.ts",
     "test:healing": "tsx tests/test-partition-healing-identity.ts",
     "test:causality": "tsx tests/test-causality-logical-clocks.ts",
+    "test:auth": "tsx tests/test-auth-service.ts",
+    "test:security": "tsx tests/test-security-enhancements.ts",
     "test": "tsx tests/test-mesh-relay-routing.ts"
   },
   "dependencies": {
+    "pg": "^8.23.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

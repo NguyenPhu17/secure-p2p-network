@@ -154,8 +154,8 @@ async function runCausalityTests() {
     }
 
     // 3. Kiểm tra lịch sử chat tại Alice và Bob
-    const aliceHistory = alice.getChatHistory("Bob");
-    const bobHistory = bob.getChatHistory("Alice");
+    const aliceHistory = await alice.getChatHistory("Bob");
+    const bobHistory = await bob.getChatHistory("Alice");
 
     console.log(`\n   [LỊCH SỬ CHAT CỦA ALICE (Đã sắp xếp theo Lamport Total Order)]:`);
     for (const m of aliceHistory) {
@@ -200,10 +200,10 @@ async function runCausalityTests() {
 
   // 2. Gói tin cũ bị trễ mạng đến sau mang Lamport Clock = 5 (Dữ liệu cũ: OFFLINE)
   console.log("   - Một gói tin cũ trễ mạng đến sau với Lamport Clock = 5 (Status = 'OFFLINE')...");
-  alice.getDhtNode().saveToStorage(testKey, { status: "OFFLINE", note: "Bản ghi cũ bị trễ" }, 300000, "Charlie", false, 5, 1);
+  await alice.getDhtNode().saveToStorage(testKey, { status: "OFFLINE", note: "Bản ghi cũ bị trễ" }, 300000, "Charlie", false, 5, 1);
 
   // 3. Kiểm tra xem bản ghi mới L=10 có bị bản ghi cũ L=5 ghi đè không
-  const valAfterStale = alice.getDhtNode().getStorageEntry(testKey);
+  const valAfterStale = await alice.getDhtNode().getStorageEntry(testKey);
   console.log(`   - Giá trị DHT sau khi nhận bản ghi cũ: ${JSON.stringify(valAfterStale?.value)} (Lamport: L${valAfterStale?.lamport_clock})`);
 
   if (valAfterStale?.lamport_clock !== 10 || valAfterStale?.value.status !== "ONLINE") {

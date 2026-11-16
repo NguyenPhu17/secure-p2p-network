@@ -205,7 +205,7 @@ async function runPartitionHealingAndIdentityTest() {
 
   // Đợi ACK về
   await new Promise((r) => setTimeout(r, 500));
-  const bobHistory = bobPart.getChatHistory("Alice");
+  const bobHistory = await bobPart.getChatHistory("Alice");
   const receivedMsg = bobHistory.find(m => m.body.includes("hàn gắn tự động"));
 
   if (!receivedMsg) {

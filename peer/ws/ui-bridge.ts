@@ -1,13 +1,15 @@
 /**
- * UIBridge - WebSocket Server làm cầu nối giữa Peer Backend và React UI
- * Lắng nghe kết nối WebSocket từ giao diện trình duyệt trên localhost.
+ * UIBridge - WebSocket & HTTP Server làm cầu nối giữa Peer Backend và React UI
+ * Lắng nghe kết nối WebSocket và HTTP REST API xác thực trên localhost.
  */
 
+import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { PeerController } from "../peer-controller.js";
 import { Logger, LogEntry } from "../../common/logger.js";
 
 export class UIBridge {
+  private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
   private clients: Set<WebSocket> = new Set();
 
@@ -19,16 +21,112 @@ export class UIBridge {
 
   public start(): Promise<void> {
     return new Promise((resolve) => {
-      this.wss = new WebSocketServer({ port: this.uiPort }, () => {
-        this.logger.info("SYSTEM", `UIBridge WebSocket Server đang chạy tại ws://127.0.0.1:${this.uiPort}`);
+      // 1. Tạo HTTP Server phục vụ REST Auth API (Login, Register, List Users)
+      this.httpServer = http.createServer(async (req, res) => {
+        const corsHeaders: Record<string, string> = {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          "Content-Type": "application/json"
+        };
+
+        if (req.method === "OPTIONS") {
+          res.writeHead(204, corsHeaders);
+          res.end();
+          return;
+        }
+
+        const url = req.url || "";
+
+        // API Đăng nhập: POST /api/auth/login
+        if (url === "/api/auth/login" && req.method === "POST") {
+          try {
+            const body = await this.readJsonBody(req);
+            const result = await this.peerController.getUserService().login(body.username, body.password);
+            res.writeHead(result.success ? 200 : 401, corsHeaders);
+            res.end(JSON.stringify(result));
+          } catch (e: any) {
+            res.writeHead(500, corsHeaders);
+            res.end(JSON.stringify({ success: false, error: e.message }));
+          }
+          return;
+        }
+
+        // API Đăng ký: POST /api/auth/register
+        if (url === "/api/auth/register" && req.method === "POST") {
+          try {
+            const body = await this.readJsonBody(req);
+            const result = await this.peerController
+              .getUserService()
+              .register(body.username, body.password, body.displayName, body.nodePort || this.uiPort);
+            res.writeHead(result.success ? 200 : 400, corsHeaders);
+            res.end(JSON.stringify(result));
+          } catch (e: any) {
+            res.writeHead(500, corsHeaders);
+            res.end(JSON.stringify({ success: false, error: e.message }));
+          }
+          return;
+        }
+
+        // API Danh sách tài khoản: GET /api/auth/users
+        if (url === "/api/auth/users" && req.method === "GET") {
+          try {
+            const users = await this.peerController.getUserService().listUsers();
+            res.writeHead(200, corsHeaders);
+            res.end(JSON.stringify({ success: true, users }));
+          } catch (e: any) {
+            res.writeHead(500, corsHeaders);
+            res.end(JSON.stringify({ success: false, error: e.message }));
+          }
+          return;
+        }
+
+        // API Xác thực Token: GET /api/auth/verify
+        if (url.startsWith("/api/auth/verify") && req.method === "GET") {
+          try {
+            const authHeader = req.headers["authorization"] || "";
+            let token = "";
+            if (authHeader.startsWith("Bearer ")) {
+              token = authHeader.slice(7).trim();
+            } else {
+              const parsedUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+              token = parsedUrl.searchParams.get("token") || "";
+            }
+            const result = this.peerController.getUserService().verifyToken(token);
+            res.writeHead(result.valid ? 200 : 401, corsHeaders);
+            res.end(JSON.stringify(result));
+          } catch (e: any) {
+            res.writeHead(500, corsHeaders);
+            res.end(JSON.stringify({ valid: false, error: e.message }));
+          }
+          return;
+        }
+
+        // Endpoint mặc định kiểm tra tình trạng sức khỏe
+        if (url === "/api/health") {
+          res.writeHead(200, corsHeaders);
+          res.end(JSON.stringify({ status: "ok", node: this.peerController.displayName, port: this.uiPort }));
+          return;
+        }
+
+        res.writeHead(404, corsHeaders);
+        res.end(JSON.stringify({ error: "Not Found" }));
+      });
+
+      // 2. Tích hợp WebSocket Server vào HTTP Server
+      this.wss = new WebSocketServer({ server: this.httpServer });
+
+      this.httpServer.listen(this.uiPort, () => {
+        this.logger.info("SYSTEM", `UIBridge Server (HTTP + WS) đang chạy tại port ${this.uiPort}`);
         resolve();
       });
 
-      this.wss.on("connection", (ws: WebSocket) => {
+      this.wss.on("connection", async (ws: WebSocket) => {
         this.clients.add(ws);
         this.logger.info("NETWORK", "React UI đã kết nối tới WebSocket Bridge.");
 
         // Gửi trạng thái ban đầu ngay khi UI vừa kết nối
+        const knownPeers = await this.peerController.getKnownPeersForUI();
         this.sendToClient(ws, {
           event: "INITIAL_STATE",
           data: {
@@ -37,7 +135,7 @@ export class UIBridge {
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
-            knownPeers: this.peerController.getKnownPeersForUI(),
+            knownPeers,
             blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
@@ -75,9 +173,27 @@ export class UIBridge {
     });
   }
 
+  private readJsonBody(req: http.IncomingMessage): Promise<any> {
+    return new Promise((resolve, reject) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        try {
+          resolve(body ? JSON.parse(body) : {});
+        } catch (e) {
+          reject(new Error("Dữ liệu JSON không hợp lệ"));
+        }
+      });
+      req.on("error", reject);
+    });
+  }
+
   private async handleUICommand(ws: WebSocket, cmd: any): Promise<void> {
     switch (cmd.action) {
       case "GET_INITIAL_STATE": {
+        const knownPeers = await this.peerController.getKnownPeersForUI();
         this.sendToClient(ws, {
           event: "INITIAL_STATE",
           data: {
@@ -86,12 +202,32 @@ export class UIBridge {
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
             peers: this.peerController.getOnlinePeers(),
-            knownPeers: this.peerController.getKnownPeersForUI(),
+            knownPeers,
             blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
           }
         });
+        break;
+      }
+
+      case "AUTH_LOGIN": {
+        const result = await this.peerController.getUserService().login(cmd.username, cmd.password);
+        this.sendToClient(ws, { event: "AUTH_RESULT", data: result });
+        break;
+      }
+
+      case "AUTH_REGISTER": {
+        const result = await this.peerController
+          .getUserService()
+          .register(cmd.username, cmd.password, cmd.displayName, cmd.nodePort || this.uiPort);
+        this.sendToClient(ws, { event: "AUTH_RESULT", data: result });
+        break;
+      }
+
+      case "AUTH_USERS": {
+        const users = await this.peerController.getUserService().listUsers();
+        this.sendToClient(ws, { event: "AUTH_USERS_LIST", data: users });
         break;
       }
 
@@ -111,7 +247,7 @@ export class UIBridge {
         if (!cmd.peer) return;
         const limit = cmd.limit || 50;
         const before = cmd.beforeLamportClock !== undefined ? cmd.beforeLamportClock : cmd.beforeTimestamp;
-        const messages = this.peerController.getChatHistory(cmd.peer, limit, before);
+        const messages = await this.peerController.getChatHistory(cmd.peer, limit, before);
         this.sendToClient(ws, {
           event: "CHAT_HISTORY",
           data: {
@@ -125,7 +261,7 @@ export class UIBridge {
 
       case "DELETE_CHAT_HISTORY": {
         if (!cmd.peer) return;
-        this.peerController.deleteChatHistory(cmd.peer);
+        await this.peerController.deleteChatHistory(cmd.peer);
         break;
       }
 
@@ -170,6 +306,12 @@ export class UIBridge {
       });
       this.wss = null;
     }
+
+    if (this.httpServer) {
+      await new Promise<void>((resolve) => {
+        this.httpServer!.close(() => resolve());
+      });
+      this.httpServer = null;
+    }
   }
 }
-

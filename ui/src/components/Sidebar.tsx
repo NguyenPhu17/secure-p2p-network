@@ -1,6 +1,6 @@
 import React from "react";
 import { PeerInfo } from "../types";
-import { Wifi, Shield, Radio } from "lucide-react";
+import { Wifi, Shield, Radio, LogOut } from "lucide-react";
 
 interface SidebarProps {
   me: string;
@@ -9,6 +9,7 @@ interface SidebarProps {
   blockedPeers?: string[];
   activePeer: string | null;
   onSelectPeer: (peerName: string) => void;
+  onLogout?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -18,6 +19,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   blockedPeers = [],
   activePeer,
   onSelectPeer,
+  onLogout,
 }) => {
   return (
     <aside className="w-[280px] xl:w-[300px] flex-shrink-0 border-r border-[#E2E8F0] bg-[#F8FAFC] flex flex-col h-full select-none">
@@ -42,6 +44,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         </div>
+
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            title="Đăng xuất tài khoản"
+            className="p-1.5 text-[#64748B] hover:text-[#EF4444] hover:bg-[#F1F5F9] rounded-[6px] transition-colors flex-shrink-0"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Sub-header: Active Peers count (40px) */}

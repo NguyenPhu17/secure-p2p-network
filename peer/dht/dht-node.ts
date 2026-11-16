@@ -155,9 +155,9 @@ export class DhtNode {
   }
 
   /**
-   * Lưu trữ cặp key-value vào cả bộ nhớ RAM và Persistent SQLite Store
+   * Lưu trữ cặp key-value vào cả bộ nhớ RAM và Persistent Store
    */
-  public saveToStorage(
+  public async saveToStorage(
     key: string,
     value: any,
     ttlMs: number,
@@ -165,8 +165,11 @@ export class DhtNode {
     isLocalPublished = false,
     lamportClock = 0,
     version = 1
-  ): boolean {
-    const existing = this.storage.get(key) || (this.persistentStore ? this.persistentStore.getDhtRecord(key) : null);
+  ): Promise<boolean> {
+    let existing = this.storage.get(key);
+    if (!existing && this.persistentStore) {
+      existing = (await this.persistentStore.getDhtRecord(key)) || undefined;
+    }
     if (existing && lamportClock > 0 && existing.lamport_clock) {
       if (lamportClock < existing.lamport_clock) {
         this.logger.warn(
@@ -193,7 +196,7 @@ export class DhtNode {
 
     if (this.persistentStore) {
       try {
-        this.persistentStore.saveDhtRecord(
+        await this.persistentStore.saveDhtRecord(
           key,
           value,
           expiresAt,
@@ -203,33 +206,33 @@ export class DhtNode {
           version
         );
       } catch (err: any) {
-        this.logger.warn("DHT", `Lỗi khi lưu DHT record '${key}' vào SQLite: ${err.message}`);
+        this.logger.warn("DHT", `Lỗi khi lưu DHT record '${key}' vào database: ${err.message}`);
       }
     }
     return true;
   }
 
   /**
-   * Lấy bản ghi lưu trữ DHT theo key (từ RAM hoặc SQLite Store)
+   * Lấy bản ghi lưu trữ DHT theo key (từ RAM hoặc Persistent Store)
    */
-  public getStorageEntry(key: string): StoredValue | undefined {
+  public async getStorageEntry(key: string): Promise<StoredValue | undefined> {
     let entry = this.storage.get(key);
     if (!entry && this.persistentStore) {
-      entry = this.persistentStore.getDhtRecord(key) || undefined;
+      entry = (await this.persistentStore.getDhtRecord(key)) || undefined;
     }
     return entry;
   }
 
   /**
-   * Xóa bản ghi khỏi RAM và SQLite
+   * Xóa bản ghi khỏi RAM và Persistent Store
    */
-  public deleteFromStorage(key: string): void {
+  public async deleteFromStorage(key: string): Promise<void> {
     this.storage.delete(key);
     if (this.persistentStore) {
       try {
-        this.persistentStore.deleteDhtRecord(key);
+        await this.persistentStore.deleteDhtRecord(key);
       } catch (err: any) {
-        this.logger.warn("DHT", `Lỗi khi xóa DHT record '${key}' khỏi SQLite: ${err.message}`);
+        this.logger.warn("DHT", `Lỗi khi xóa DHT record '${key}' khỏi database: ${err.message}`);
       }
     }
   }
@@ -243,24 +246,24 @@ export class DhtNode {
       `Khởi động DHT Node '${this.localInfo.displayName}' (Node ID: ${this.localNodeId.substring(0, 8)}...)`
     );
 
-    // 1. Phục hồi dữ liệu DHT từ Persistent Store SQLite (Chống mất mát khi Churn/Restart)
+    // 1. Phục hồi dữ liệu DHT từ Persistent Store (Chống mất mát khi Churn/Restart)
     if (this.persistentStore) {
       try {
-        const persisted = this.persistentStore.getAllUnexpiredDhtRecords(Date.now());
+        const persisted = await this.persistentStore.getAllUnexpiredDhtRecords(Date.now());
         for (const [key, val] of persisted.entries()) {
           this.storage.set(key, val);
         }
         this.logger.info(
           "DHT",
-          `💾 [DHT PERSISTENCE] Đã phục hồi thành công ${persisted.size} bản ghi DHT từ cơ sở dữ liệu SQLite bền vững.`
+          `💾 [DHT PERSISTENCE] Đã phục hồi thành công ${persisted.size} bản ghi DHT từ cơ sở dữ liệu bền vững.`
         );
       } catch (err: any) {
-        this.logger.warn("DHT", `Lỗi khi nạp dữ liệu DHT từ SQLite: ${err.message}`);
+        this.logger.warn("DHT", `Lỗi khi nạp dữ liệu DHT từ database: ${err.message}`);
       }
     }
 
-    // 2. Lưu thông tin bản thân vào storage (cả RAM và SQLite)
-    this.saveToStorage(
+    // 2. Lưu thông tin bản thân vào storage (cả RAM và Store)
+    await this.saveToStorage(
       this.localNodeId,
       this.localInfo,
       365 * 24 * 3600 * 1000,
@@ -431,7 +434,7 @@ export class DhtNode {
         if (valueToStore && valueToStore.type === "mailbox" && Array.isArray(valueToStore.messages)) {
           let existing = this.storage.get(payload.key);
           if (!existing && this.persistentStore) {
-            existing = this.persistentStore.getDhtRecord(payload.key) || undefined;
+            existing = (await this.persistentStore.getDhtRecord(payload.key)) || undefined;
           }
 
           if (
@@ -467,7 +470,7 @@ export class DhtNode {
           // Phân giải xung đột ghi đè dựa trên Lamport Logical Clocks & Version
           let existing = this.storage.get(payload.key);
           if (!existing && this.persistentStore) {
-            existing = this.persistentStore.getDhtRecord(payload.key) || undefined;
+            existing = (await this.persistentStore.getDhtRecord(payload.key)) || undefined;
           }
           if (existing && incomingClock > 0 && existing.lamport_clock && incomingClock < existing.lamport_clock) {
             this.logger.warn(
@@ -498,8 +501,8 @@ export class DhtNode {
           }
         }
 
-        // Lưu bền vững vào cả RAM và SQLite
-        this.saveToStorage(
+        // Lưu bền vững vào cả RAM và Store
+        await this.saveToStorage(
           payload.key,
           valueToStore,
           payload.ttlMs || 3600000,
@@ -564,7 +567,7 @@ export class DhtNode {
 
         let entry = this.storage.get(payload.key);
         if (!entry && this.persistentStore) {
-          entry = this.persistentStore.getDhtRecord(payload.key) || undefined;
+          entry = (await this.persistentStore.getDhtRecord(payload.key)) || undefined;
           if (entry && entry.expiresAt > Date.now()) {
             this.storage.set(payload.key, entry);
           }
@@ -1026,8 +1029,8 @@ export class DhtNode {
     lamportClock: number = 0,
     version: number = 1
   ): Promise<number> {
-    // 1. Lưu bản sao trên chính mình (RAM + SQLite, đánh dấu sở hữu bản quyền dữ liệu)
-    this.saveToStorage(
+    // 1. Lưu bản sao trên chính mình (RAM + Store, đánh dấu sở hữu bản quyền dữ liệu)
+    await this.saveToStorage(
       key,
       value,
       ttlMs,
@@ -1088,9 +1091,9 @@ export class DhtNode {
     // 1. Kiểm tra local cache (RAM)
     let local = this.storage.get(key);
 
-    // 2. Nếu chưa có trên RAM, thử kiểm tra cơ sở dữ liệu SQLite bền vững
+    // 2. Nếu chưa có trên RAM, thử kiểm tra cơ sở dữ liệu bền vững
     if (!local && this.persistentStore) {
-      local = this.persistentStore.getDhtRecord(key) || undefined;
+      local = (await this.persistentStore.getDhtRecord(key)) || undefined;
       if (local && local.expiresAt > Date.now()) {
         this.storage.set(key, local);
       }
@@ -1126,8 +1129,8 @@ export class DhtNode {
       try {
         const resp = await this.waitForResponse<DhtFindValueRespPayload>(msgId, this.rpcTimeoutMs);
         if (resp && resp.found) {
-          // Lưu cache lại trên node (cả RAM và SQLite)
-          this.saveToStorage(key, resp.value, 300000, contact.displayName, false);
+          // Lưu cache lại trên node (cả RAM và Store)
+          await this.saveToStorage(key, resp.value, 300000, contact.displayName, false);
           return { found: true, value: resp.value };
         }
       } catch {}
@@ -1207,7 +1210,7 @@ export class DhtNode {
     if (!foundRemote) {
       let local = this.storage.get(mailboxKey);
       if (!local && this.persistentStore) {
-        local = this.persistentStore.getDhtRecord(mailboxKey) || undefined;
+        local = (await this.persistentStore.getDhtRecord(mailboxKey)) || undefined;
       }
       if (
         local &&
@@ -1275,7 +1278,7 @@ export class DhtNode {
     };
     const storedCount = await this.store(mailboxKey, emptyMailbox, 3600000);
     // Không lưu bản ghi mailbox rỗng cục bộ của chính mình để tránh che mất truy vấn mạng ở lần khởi động sau
-    this.deleteFromStorage(mailboxKey);
+    await this.deleteFromStorage(mailboxKey);
     return storedCount > 0;
   }
 
@@ -1479,15 +1482,15 @@ export class DhtNode {
       })
     );
 
-    // Dọn dẹp storage các bản ghi hết hạn (RAM + SQLite)
+    // Dọn dẹp storage các bản ghi hết hạn (RAM + Store)
     const now = Date.now();
     for (const [key, entry] of this.storage.entries()) {
       if (entry.expiresAt <= now && key !== this.localNodeId) {
-        this.deleteFromStorage(key);
+        await this.deleteFromStorage(key);
       }
     }
     if (this.persistentStore) {
-      this.persistentStore.cleanupExpiredDhtRecords(now);
+      await this.persistentStore.cleanupExpiredDhtRecords(now);
     }
   }
 

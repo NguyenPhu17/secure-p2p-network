@@ -1,6 +1,7 @@
 /**
- * MessageStore - Lớp trừu tượng duy nhất để truy cập Cơ sở Dữ liệu SQLite
+ * MessageStore - Lớp trừu tượng duy nhất để truy cập Cơ sở Dữ liệu PostgreSQL
  * Đóng gói toàn bộ câu lệnh SQL, chống trùng lặp message_id, xử lý hàng đợi offline và lịch sử tin nhắn.
+ * Hỗ trợ multi-tenant: cột node_owner phân biệt dữ liệu giữa các peer node dùng chung 1 DB.
  *
  * TODO(SECURITY): Trong Giai đoạn 2, thành viên bảo mật có thể:
  * 1. Bổ sung mã hóa at-rest cho cột `body` trước khi INSERT (dùng Secret Key cục bộ).
@@ -8,7 +9,7 @@
  */
 
 import crypto from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import { Pool } from "pg";
 import { initDatabase } from "./migrations.js";
 import { PeerInfo } from "../../common/protocol.js";
 import { IDhtPersistentStore, StoredValue, generateNodeIdFromPublicKey } from "../dht/dht-types.js";
@@ -47,24 +48,36 @@ export interface FileRecord {
 }
 
 export class MessageStore implements IDhtPersistentStore {
-  private db: DatabaseSync;
+  private pool: Pool;
+  private nodeOwner: string;
 
-  constructor(dbPath: string) {
-    this.db = initDatabase(dbPath);
+  private constructor(pool: Pool, nodeOwner: string) {
+    this.pool = pool;
+    this.nodeOwner = nodeOwner;
+  }
+
+  /**
+   * Factory method tạo MessageStore (thay cho constructor vì cần async init)
+   */
+  public static async create(pool: Pool, nodeOwner: string): Promise<MessageStore> {
+    const store = new MessageStore(pool, nodeOwner);
+    await initDatabase(pool);
+    return store;
   }
 
   /**
    * Tạo hoặc lấy ID cuộc trò chuyện với một peer đối tác
    */
-  public getOrCreateConversation(peerName: string): string {
+  public async getOrCreateConversation(peerName: string): Promise<string> {
     const convId = `conv_${peerName}`;
     const now = Date.now();
 
-    const insertStmt = this.db.prepare(`
-      INSERT OR IGNORE INTO conversations (id, peer_name, created_at, last_message_at)
-      VALUES (?, ?, ?, ?)
-    `);
-    insertStmt.run(convId, peerName, now, now);
+    await this.pool.query(
+      `INSERT INTO conversations (id, node_owner, peer_name, created_at, last_message_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id, node_owner) DO NOTHING`,
+      [convId, this.nodeOwner, peerName, now, now]
+    );
 
     return convId;
   }
@@ -73,51 +86,55 @@ export class MessageStore implements IDhtPersistentStore {
    * Lưu tin nhắn vào DB.
    * Chống trùng lặp (Deduplication): Nếu message_id đã tồn tại -> Bỏ qua và trả về isDuplicate = true.
    */
-  public saveMessage(msg: MessageRecord): { isDuplicate: boolean } {
+  public async saveMessage(msg: MessageRecord): Promise<{ isDuplicate: boolean }> {
     // 1. Kiểm tra trùng lặp message_id
-    const checkStmt = this.db.prepare("SELECT message_id FROM messages WHERE message_id = ?");
-    const existing = checkStmt.get(msg.message_id);
-    if (existing) {
+    const checkResult = await this.pool.query(
+      "SELECT message_id FROM messages WHERE message_id = $1 AND node_owner = $2",
+      [msg.message_id, this.nodeOwner]
+    );
+    if (checkResult.rows.length > 0) {
       return { isDuplicate: true };
     }
 
     // 2. Đảm bảo conversation tồn tại
     const partnerName = msg.direction === "out" ? msg.receiver : msg.sender;
-    const convId = this.getOrCreateConversation(partnerName);
+    const convId = await this.getOrCreateConversation(partnerName);
 
     // 3. TODO(SECURITY): Nếu muốn mã hóa at-rest, thực hiện mã hóa msg.body tại đây trước khi lưu
-    const insertStmt = this.db.prepare(`
-      INSERT INTO messages (
-        message_id, conversation_id, sender, receiver, direction,
+    await this.pool.query(
+      `INSERT INTO messages (
+        message_id, node_owner, conversation_id, sender, receiver, direction,
         seq, timestamp, body, status, type, file_id, created_at, nonce, mac_or_signature,
         route, relayed_by, lamport_clock, vector_clock
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    insertStmt.run(
-      msg.message_id,
-      convId,
-      msg.sender,
-      msg.receiver,
-      msg.direction,
-      msg.seq,
-      msg.timestamp,
-      msg.body,
-      msg.status,
-      msg.type,
-      msg.file_id || null,
-      msg.created_at || Date.now(),
-      msg.nonce || null,
-      msg.mac_or_signature || null,
-      msg.route ? JSON.stringify(msg.route) : null,
-      msg.relayed_by || null,
-      msg.lamport_clock || 0,
-      msg.vector_clock ? JSON.stringify(msg.vector_clock) : null
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+      [
+        msg.message_id,
+        this.nodeOwner,
+        convId,
+        msg.sender,
+        msg.receiver,
+        msg.direction,
+        msg.seq,
+        msg.timestamp,
+        msg.body,
+        msg.status,
+        msg.type,
+        msg.file_id || null,
+        msg.created_at || Date.now(),
+        msg.nonce || null,
+        msg.mac_or_signature || null,
+        msg.route ? JSON.stringify(msg.route) : null,
+        msg.relayed_by || null,
+        msg.lamport_clock || 0,
+        msg.vector_clock ? JSON.stringify(msg.vector_clock) : null
+      ]
     );
 
     // 4. Cập nhật last_message_at của cuộc hội thoại
-    const updateConvStmt = this.db.prepare("UPDATE conversations SET last_message_at = ? WHERE id = ?");
-    updateConvStmt.run(msg.timestamp, convId);
+    await this.pool.query(
+      "UPDATE conversations SET last_message_at = $1 WHERE id = $2 AND node_owner = $3",
+      [msg.timestamp, convId, this.nodeOwner]
+    );
 
     return { isDuplicate: false };
   }
@@ -150,55 +167,62 @@ export class MessageStore implements IDhtPersistentStore {
   /**
    * Tìm kiếm 1 message theo ID
    */
-  public getMessage(messageId: string): MessageRecord | null {
-    const stmt = this.db.prepare("SELECT * FROM messages WHERE message_id = ?");
-    const row = stmt.get(messageId) as any;
+  public async getMessage(messageId: string): Promise<MessageRecord | null> {
+    const result = await this.pool.query(
+      "SELECT * FROM messages WHERE message_id = $1 AND node_owner = $2",
+      [messageId, this.nodeOwner]
+    );
+    const row = result.rows[0];
     return row ? this.mapRowToRecord(row) : null;
   }
 
   /**
    * Cập nhật trạng thái tin nhắn (pending -> sent -> delivered)
    */
-  public updateMessageStatus(
+  public async updateMessageStatus(
     messageId: string,
     status: MessageRecord["status"],
     route?: string[] | null,
     relayedBy?: string | null
-  ): void {
+  ): Promise<void> {
     if (route !== undefined || relayedBy !== undefined) {
-      const stmt = this.db.prepare(
-        "UPDATE messages SET status = ?, route = COALESCE(?, route), relayed_by = COALESCE(?, relayed_by) WHERE message_id = ?"
+      await this.pool.query(
+        `UPDATE messages SET status = $1, route = COALESCE($2, route), relayed_by = COALESCE($3, relayed_by)
+         WHERE message_id = $4 AND node_owner = $5`,
+        [status, route ? JSON.stringify(route) : null, relayedBy || null, messageId, this.nodeOwner]
       );
-      stmt.run(status, route ? JSON.stringify(route) : null, relayedBy || null, messageId);
     } else {
-      const stmt = this.db.prepare("UPDATE messages SET status = ? WHERE message_id = ?");
-      stmt.run(status, messageId);
+      await this.pool.query(
+        "UPDATE messages SET status = $1 WHERE message_id = $2 AND node_owner = $3",
+        [status, messageId, this.nodeOwner]
+      );
     }
   }
 
   /**
    * Lấy các tin nhắn chưa gửi được (status = 'pending') của một peer để tự động gửi lại
    */
-  public getPendingMessages(peerName: string): MessageRecord[] {
+  public async getPendingMessages(peerName: string): Promise<MessageRecord[]> {
     const convId = `conv_${peerName}`;
-    const stmt = this.db.prepare(`
-      SELECT * FROM messages
-      WHERE conversation_id = ? AND direction = 'out' AND status = 'pending'
-      ORDER BY lamport_clock ASC, seq ASC, timestamp ASC
-    `);
-    const rows = stmt.all(convId) as any[];
-    return rows.map((r) => this.mapRowToRecord(r));
+    const result = await this.pool.query(
+      `SELECT * FROM messages
+       WHERE conversation_id = $1 AND node_owner = $2 AND direction = 'out' AND status = 'pending'
+       ORDER BY lamport_clock ASC, seq ASC, timestamp ASC`,
+      [convId, this.nodeOwner]
+    );
+    return result.rows.map((r: any) => this.mapRowToRecord(r));
   }
 
   /**
    * Lấy số Sequence number kế tiếp cho tin nhắn gửi tới peer đối phương
    */
-  public getNextSeq(peerName: string): number {
+  public async getNextSeq(peerName: string): Promise<number> {
     const convId = `conv_${peerName}`;
-    const stmt = this.db.prepare(`
-      SELECT MAX(seq) as maxSeq FROM messages WHERE conversation_id = ? AND direction = 'out'
-    `);
-    const row = stmt.get(convId) as any;
+    const result = await this.pool.query(
+      `SELECT MAX(seq) as "maxSeq" FROM messages WHERE conversation_id = $1 AND node_owner = $2 AND direction = 'out'`,
+      [convId, this.nodeOwner]
+    );
+    const row = result.rows[0];
     return (row?.maxSeq || 0) + 1;
   }
 
@@ -206,41 +230,47 @@ export class MessageStore implements IDhtPersistentStore {
    * Lấy giá trị Lamport Clock lớn nhất từng được lưu trong DB
    * Phục vụ khôi phục trạng thái đồng hồ logic khi node khởi động lại
    */
-  public getMaxLamportClock(): number {
-    const stmt = this.db.prepare("SELECT MAX(lamport_clock) as maxClock FROM messages");
-    const row = stmt.get() as any;
+  public async getMaxLamportClock(): Promise<number> {
+    const result = await this.pool.query(
+      `SELECT MAX(lamport_clock) as "maxClock" FROM messages WHERE node_owner = $1`,
+      [this.nodeOwner]
+    );
+    const row = result.rows[0];
     return row && row.maxClock ? Number(row.maxClock) : 0;
   }
 
   /**
    * Lưu giá trị Lamport Clock hiện tại vào bảng node_state
    */
-  public saveLamportClock(clock: number): void {
+  public async saveLamportClock(clock: number): Promise<void> {
     try {
-      const stmt = this.db.prepare(`
-        INSERT INTO node_state (key, value, updated_at)
-        VALUES ('lamport_clock', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-      `);
-      stmt.run(String(clock), Date.now());
+      await this.pool.query(
+        `INSERT INTO node_state (key, node_owner, value, updated_at)
+         VALUES ('lamport_clock', $1, $2, $3)
+         ON CONFLICT(key, node_owner) DO UPDATE SET
+           value = EXCLUDED.value,
+           updated_at = EXCLUDED.updated_at`,
+        [this.nodeOwner, String(clock), Date.now()]
+      );
     } catch {}
   }
 
   /**
    * Lấy giá trị Lamport Clock đã lưu (kết hợp node_state và MAX messages)
    */
-  public getSavedLamportClock(): number {
+  public async getSavedLamportClock(): Promise<number> {
     let fromState = 0;
     try {
-      const stmt = this.db.prepare("SELECT value FROM node_state WHERE key = 'lamport_clock'");
-      const row = stmt.get() as any;
+      const result = await this.pool.query(
+        "SELECT value FROM node_state WHERE key = 'lamport_clock' AND node_owner = $1",
+        [this.nodeOwner]
+      );
+      const row = result.rows[0];
       if (row && row.value) {
         fromState = Number(row.value) || 0;
       }
     } catch {}
-    const fromMessages = this.getMaxLamportClock();
+    const fromMessages = await this.getMaxLamportClock();
     return Math.max(fromState, fromMessages);
   }
 
@@ -249,96 +279,112 @@ export class MessageStore implements IDhtPersistentStore {
    * Sắp xếp theo Lamport Total Order (Thứ tự nhân quả):
    * ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
    */
-  public getHistory(peerName: string, limit = 50, beforeClockOrTimestamp?: number): MessageRecord[] {
+  public async getHistory(peerName: string, limit = 50, beforeClockOrTimestamp?: number): Promise<MessageRecord[]> {
     const convId = `conv_${peerName}`;
-    let stmt;
-    let rows: any[];
+    let result;
 
     if (beforeClockOrTimestamp) {
       // Nếu tham số truyền vào là timestamp lớn (ví dụ > 1,000,000,000,000 ms của Date.now())
       if (beforeClockOrTimestamp > 1000000000000) {
-        stmt = this.db.prepare(`
-          SELECT * FROM messages
-          WHERE conversation_id = ? AND timestamp < ?
-          ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
-          LIMIT ?
-        `);
-        rows = stmt.all(convId, beforeClockOrTimestamp, limit);
+        result = await this.pool.query(
+          `SELECT * FROM messages
+           WHERE conversation_id = $1 AND node_owner = $2 AND timestamp < $3
+           ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
+           LIMIT $4`,
+          [convId, this.nodeOwner, beforeClockOrTimestamp, limit]
+        );
       } else {
         // Tham số là Lamport Clock
-        stmt = this.db.prepare(`
-          SELECT * FROM messages
-          WHERE conversation_id = ? AND lamport_clock < ?
-          ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
-          LIMIT ?
-        `);
-        rows = stmt.all(convId, beforeClockOrTimestamp, limit);
+        result = await this.pool.query(
+          `SELECT * FROM messages
+           WHERE conversation_id = $1 AND node_owner = $2 AND lamport_clock < $3
+           ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
+           LIMIT $4`,
+          [convId, this.nodeOwner, beforeClockOrTimestamp, limit]
+        );
       }
     } else {
-      stmt = this.db.prepare(`
-        SELECT * FROM messages
-        WHERE conversation_id = ?
-        ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
-        LIMIT ?
-      `);
-      rows = stmt.all(convId, limit);
+      result = await this.pool.query(
+        `SELECT * FROM messages
+         WHERE conversation_id = $1 AND node_owner = $2
+         ORDER BY lamport_clock DESC, seq DESC, timestamp DESC
+         LIMIT $3`,
+        [convId, this.nodeOwner, limit]
+      );
     }
 
     // Đảo ngược lại theo thứ tự thời gian tăng dần để UI render từ trên xuống dưới
-    return rows.reverse().map((r) => this.mapRowToRecord(r));
+    return result.rows.reverse().map((r: any) => this.mapRowToRecord(r));
   }
 
   /**
    * Xóa toàn bộ lịch sử một cuộc hội thoại
    */
-  public deleteConversation(peerName: string): void {
+  public async deleteConversation(peerName: string): Promise<void> {
     const convId = `conv_${peerName}`;
-    const delFiles = this.db.prepare("DELETE FROM files WHERE conversation_id = ?");
-    delFiles.run(convId);
-    const delMsgs = this.db.prepare("DELETE FROM messages WHERE conversation_id = ?");
-    delMsgs.run(convId);
-    const delConv = this.db.prepare("DELETE FROM conversations WHERE id = ?");
-    delConv.run(convId);
+    await this.pool.query(
+      "DELETE FROM files WHERE conversation_id = $1 AND node_owner = $2",
+      [convId, this.nodeOwner]
+    );
+    await this.pool.query(
+      "DELETE FROM messages WHERE conversation_id = $1 AND node_owner = $2",
+      [convId, this.nodeOwner]
+    );
+    await this.pool.query(
+      "DELETE FROM conversations WHERE id = $1 AND node_owner = $2",
+      [convId, this.nodeOwner]
+    );
   }
 
   /**
    * Lưu / Cập nhật thông tin Peer trong DB
    */
-  public upsertPeer(peer: PeerInfo): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO peers (peer_name, last_ip, last_port, last_seen, node_id, public_key)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(peer_name) DO UPDATE SET
-        last_ip = excluded.last_ip,
-        last_port = excluded.last_port,
-        last_seen = excluded.last_seen,
-        node_id = COALESCE(excluded.node_id, peers.node_id),
-        public_key = COALESCE(excluded.public_key, peers.public_key)
-    `);
-    stmt.run(
-      peer.displayName,
-      peer.ip,
-      peer.tcpPort,
-      peer.lastSeen || Date.now(),
-      peer.nodeId || null,
-      peer.publicKey || null
+  public async upsertPeer(peer: PeerInfo): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO peers (peer_name, node_owner, last_ip, last_port, last_seen, node_id, public_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT(peer_name, node_owner) DO UPDATE SET
+         last_ip = EXCLUDED.last_ip,
+         last_port = EXCLUDED.last_port,
+         last_seen = EXCLUDED.last_seen,
+         node_id = COALESCE(EXCLUDED.node_id, peers.node_id),
+         public_key = COALESCE(EXCLUDED.public_key, peers.public_key)`,
+      [
+        peer.displayName,
+        this.nodeOwner,
+        peer.ip,
+        peer.tcpPort,
+        peer.lastSeen || Date.now(),
+        peer.nodeId || null,
+        peer.publicKey || null
+      ]
     );
   }
 
-  public getKnownPeers(): PeerInfo[] {
-    const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen, node_id as nodeId, public_key as publicKey FROM peers");
-    return stmt.all() as any[];
+  public async getKnownPeers(): Promise<PeerInfo[]> {
+    const result = await this.pool.query(
+      `SELECT peer_name as "displayName", last_ip as "ip", last_port as "tcpPort", last_seen as "lastSeen", node_id as "nodeId", public_key as "publicKey"
+       FROM peers WHERE node_owner = $1`,
+      [this.nodeOwner]
+    );
+    return result.rows;
   }
 
-  public getConversationPeers(): string[] {
-    const stmt = this.db.prepare("SELECT peer_name FROM conversations ORDER BY last_message_at DESC");
-    const rows = stmt.all() as Array<{ peer_name: string }>;
-    return rows.map((r) => r.peer_name).filter(Boolean);
+  public async getConversationPeers(): Promise<string[]> {
+    const result = await this.pool.query(
+      "SELECT peer_name FROM conversations WHERE node_owner = $1 ORDER BY last_message_at DESC",
+      [this.nodeOwner]
+    );
+    return result.rows.map((r: { peer_name: string }) => r.peer_name).filter(Boolean);
   }
 
-  public getPeer(peerName: string): PeerInfo | null {
-    const stmt = this.db.prepare("SELECT peer_name as displayName, last_ip as ip, last_port as tcpPort, last_seen as lastSeen, node_id as nodeId, public_key as publicKey FROM peers WHERE peer_name = ?");
-    const row = stmt.get(peerName) as any;
+  public async getPeer(peerName: string): Promise<PeerInfo | null> {
+    const result = await this.pool.query(
+      `SELECT peer_name as "displayName", last_ip as "ip", last_port as "tcpPort", last_seen as "lastSeen", node_id as "nodeId", public_key as "publicKey"
+       FROM peers WHERE peer_name = $1 AND node_owner = $2`,
+      [peerName, this.nodeOwner]
+    );
+    const row = result.rows[0];
     return row || null;
   }
 
@@ -347,10 +393,13 @@ export class MessageStore implements IDhtPersistentStore {
    * Chuẩn P2P: Node ID = SHA1(PublicKey) thay vì SHA1(displayName)
    * Giúp bảo toàn danh tính qua các lần khởi động và ngăn chặn xung đột định danh trong K-bucket.
    */
-  public getOrGenerateIdentity(displayName: string): { publicKey: string; privateKey: string; nodeId: string } {
+  public async getOrGenerateIdentity(displayName: string): Promise<{ publicKey: string; privateKey: string; nodeId: string }> {
     try {
-      const query = this.db.prepare("SELECT public_key, private_key, node_id FROM node_identity LIMIT 1");
-      const row = query.get() as { public_key: string; private_key: string; node_id: string } | undefined;
+      const result = await this.pool.query(
+        "SELECT public_key, private_key, node_id FROM node_identity WHERE node_owner = $1 LIMIT 1",
+        [this.nodeOwner]
+      );
+      const row = result.rows[0];
 
       if (row && row.public_key && row.private_key && row.node_id) {
         return {
@@ -360,7 +409,7 @@ export class MessageStore implements IDhtPersistentStore {
         };
       }
     } catch {
-      // Bảng có thể chưa tạo nếu DB in-memory đặc biệt
+      // Bảng có thể chưa tạo nếu DB chưa init
     }
 
     // Tạo mới cặp khóa mật mã học Ed25519
@@ -370,11 +419,11 @@ export class MessageStore implements IDhtPersistentStore {
     const nodeId = generateNodeIdFromPublicKey(pubPem);
 
     try {
-      const insert = this.db.prepare(`
-        INSERT INTO node_identity (id, display_name, public_key, private_key, node_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      insert.run(crypto.randomUUID(), displayName, pubPem, privPem, nodeId, Date.now());
+      await this.pool.query(
+        `INSERT INTO node_identity (id, node_owner, display_name, public_key, private_key, node_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [crypto.randomUUID(), this.nodeOwner, displayName, pubPem, privPem, nodeId, Date.now()]
+      );
     } catch {}
 
     return { publicKey: pubPem, privateKey: privPem, nodeId };
@@ -383,36 +432,51 @@ export class MessageStore implements IDhtPersistentStore {
   /**
    * Quản lý Metadata File
    */
-  public saveFileMeta(file: FileRecord): void {
+  public async saveFileMeta(file: FileRecord): Promise<void> {
     const partnerName = file.conversation_id.replace(/^conv_/, "");
-    this.getOrCreateConversation(partnerName);
+    await this.getOrCreateConversation(partnerName);
 
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO files (
-        file_id, conversation_id, file_name, size, hash, status, local_path, direction, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      file.file_id,
-      file.conversation_id,
-      file.file_name,
-      file.size,
-      file.hash,
-      file.status,
-      file.local_path,
-      file.direction,
-      file.created_at
+    await this.pool.query(
+      `INSERT INTO files (
+        file_id, node_owner, conversation_id, file_name, size, hash, status, local_path, direction, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (file_id, node_owner) DO UPDATE SET
+        conversation_id = EXCLUDED.conversation_id,
+        file_name = EXCLUDED.file_name,
+        size = EXCLUDED.size,
+        hash = EXCLUDED.hash,
+        status = EXCLUDED.status,
+        local_path = EXCLUDED.local_path,
+        direction = EXCLUDED.direction,
+        created_at = EXCLUDED.created_at`,
+      [
+        file.file_id,
+        this.nodeOwner,
+        file.conversation_id,
+        file.file_name,
+        file.size,
+        file.hash,
+        file.status,
+        file.local_path,
+        file.direction,
+        file.created_at
+      ]
     );
   }
 
-  public updateFileStatus(fileId: string, status: FileRecord["status"]): void {
-    const stmt = this.db.prepare("UPDATE files SET status = ? WHERE file_id = ?");
-    stmt.run(status, fileId);
+  public async updateFileStatus(fileId: string, status: FileRecord["status"]): Promise<void> {
+    await this.pool.query(
+      "UPDATE files SET status = $1 WHERE file_id = $2 AND node_owner = $3",
+      [status, fileId, this.nodeOwner]
+    );
   }
 
-  public getFileMeta(fileId: string): FileRecord | null {
-    const stmt = this.db.prepare("SELECT * FROM files WHERE file_id = ?");
-    const row = stmt.get(fileId) as any;
+  public async getFileMeta(fileId: string): Promise<FileRecord | null> {
+    const result = await this.pool.query(
+      "SELECT * FROM files WHERE file_id = $1 AND node_owner = $2",
+      [fileId, this.nodeOwner]
+    );
+    const row = result.rows[0];
     return row ? (row as FileRecord) : null;
   }
 
@@ -423,10 +487,10 @@ export class MessageStore implements IDhtPersistentStore {
    */
 
   /**
-   * Lưu trữ hoặc cập nhật một cặp Key-Value DHT vào SQLite.
+   * Lưu trữ hoặc cập nhật một cặp Key-Value DHT vào PostgreSQL.
    * Phân giải xung đột ghi đè dựa trên Lamport Logical Clock & Version (thay vì phụ thuộc Date.now()).
    */
-  public saveDhtRecord(
+  public async saveDhtRecord(
     key: string,
     value: any,
     expiresAt: number,
@@ -434,10 +498,13 @@ export class MessageStore implements IDhtPersistentStore {
     isLocalPublished = false,
     lamportClock = 0,
     version = 1
-  ): void {
+  ): Promise<void> {
     // Kiểm tra bản ghi hiện có để phân giải xung đột nhân quả (Causality Conflict Resolution)
-    const checkStmt = this.db.prepare("SELECT lamport_clock, version, publisher FROM dht_storage WHERE key = ?");
-    const existing = checkStmt.get(key) as any;
+    const checkResult = await this.pool.query(
+      "SELECT lamport_clock, version, publisher FROM dht_storage WHERE key = $1 AND node_owner = $2",
+      [key, this.nodeOwner]
+    );
+    const existing = checkResult.rows[0];
 
     if (existing && existing.lamport_clock !== undefined && existing.lamport_clock !== null) {
       const existingClock = Number(existing.lamport_clock) || 0;
@@ -457,36 +524,40 @@ export class MessageStore implements IDhtPersistentStore {
       }
     }
 
-    const stmt = this.db.prepare(`
-      INSERT INTO dht_storage (key, value, expires_at, publisher, is_local_published, updated_at, lamport_clock, version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        expires_at = excluded.expires_at,
-        publisher = excluded.publisher,
-        is_local_published = excluded.is_local_published,
-        updated_at = excluded.updated_at,
-        lamport_clock = excluded.lamport_clock,
-        version = excluded.version
-    `);
-    stmt.run(
-      key,
-      JSON.stringify(value),
-      expiresAt,
-      publisher,
-      isLocalPublished ? 1 : 0,
-      Date.now(),
-      lamportClock,
-      version
+    await this.pool.query(
+      `INSERT INTO dht_storage (key, node_owner, value, expires_at, publisher, is_local_published, updated_at, lamport_clock, version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT(key, node_owner) DO UPDATE SET
+         value = EXCLUDED.value,
+         expires_at = EXCLUDED.expires_at,
+         publisher = EXCLUDED.publisher,
+         is_local_published = EXCLUDED.is_local_published,
+         updated_at = EXCLUDED.updated_at,
+         lamport_clock = EXCLUDED.lamport_clock,
+         version = EXCLUDED.version`,
+      [
+        key,
+        this.nodeOwner,
+        JSON.stringify(value),
+        expiresAt,
+        publisher,
+        isLocalPublished ? 1 : 0,
+        Date.now(),
+        lamportClock,
+        version
+      ]
     );
   }
 
   /**
    * Truy vấn một bản ghi DHT theo Key
    */
-  public getDhtRecord(key: string): StoredValue | null {
-    const stmt = this.db.prepare("SELECT * FROM dht_storage WHERE key = ?");
-    const row = stmt.get(key) as any;
+  public async getDhtRecord(key: string): Promise<StoredValue | null> {
+    const result = await this.pool.query(
+      "SELECT * FROM dht_storage WHERE key = $1 AND node_owner = $2",
+      [key, this.nodeOwner]
+    );
+    const row = result.rows[0];
     if (!row) return null;
     try {
       return {
@@ -505,19 +576,23 @@ export class MessageStore implements IDhtPersistentStore {
   /**
    * Xóa một bản ghi DHT theo Key
    */
-  public deleteDhtRecord(key: string): void {
-    const stmt = this.db.prepare("DELETE FROM dht_storage WHERE key = ?");
-    stmt.run(key);
+  public async deleteDhtRecord(key: string): Promise<void> {
+    await this.pool.query(
+      "DELETE FROM dht_storage WHERE key = $1 AND node_owner = $2",
+      [key, this.nodeOwner]
+    );
   }
 
   /**
    * Lấy tất cả các bản ghi DHT chưa hết hạn để nạp vào RAM khi khởi động node
    */
-  public getAllUnexpiredDhtRecords(now: number = Date.now()): Map<string, StoredValue> {
-    const stmt = this.db.prepare("SELECT * FROM dht_storage WHERE expires_at > ?");
-    const rows = stmt.all(now) as any[];
+  public async getAllUnexpiredDhtRecords(now: number = Date.now()): Promise<Map<string, StoredValue>> {
+    const result = await this.pool.query(
+      "SELECT * FROM dht_storage WHERE expires_at > $1 AND node_owner = $2",
+      [now, this.nodeOwner]
+    );
     const map = new Map<string, StoredValue>();
-    for (const r of rows) {
+    for (const r of result.rows) {
       try {
         map.set(r.key, {
           value: JSON.parse(r.value),
@@ -533,14 +608,14 @@ export class MessageStore implements IDhtPersistentStore {
   /**
    * Lấy tất cả bản ghi do chính node này công bố (is_local_published = 1) để republish
    */
-  public getLocalPublishedDhtRecords(
+  public async getLocalPublishedDhtRecords(
     now: number = Date.now()
-  ): Array<{ key: string; value: any; expiresAt: number; publisher: string }> {
-    const stmt = this.db.prepare(
-      "SELECT * FROM dht_storage WHERE is_local_published = 1 AND expires_at > ?"
+  ): Promise<Array<{ key: string; value: any; expiresAt: number; publisher: string }>> {
+    const result = await this.pool.query(
+      "SELECT * FROM dht_storage WHERE is_local_published = 1 AND expires_at > $1 AND node_owner = $2",
+      [now, this.nodeOwner]
     );
-    const rows = stmt.all(now) as any[];
-    return rows.map((r) => ({
+    return result.rows.map((r: any) => ({
       key: r.key,
       value: JSON.parse(r.value),
       expiresAt: r.expires_at,
@@ -551,12 +626,14 @@ export class MessageStore implements IDhtPersistentStore {
   /**
    * Dọn dẹp các bản ghi DHT đã hết hạn
    */
-  public cleanupExpiredDhtRecords(now: number = Date.now()): void {
-    const stmt = this.db.prepare("DELETE FROM dht_storage WHERE expires_at <= ?");
-    stmt.run(now);
+  public async cleanupExpiredDhtRecords(now: number = Date.now()): Promise<void> {
+    await this.pool.query(
+      "DELETE FROM dht_storage WHERE expires_at <= $1 AND node_owner = $2",
+      [now, this.nodeOwner]
+    );
   }
 
-  public close(): void {
-    this.db.close();
+  public async close(): Promise<void> {
+    await this.pool.end();
   }
 }

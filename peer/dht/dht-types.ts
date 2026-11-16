@@ -39,14 +39,14 @@ export interface IDhtPersistentStore {
     expiresAt: number,
     publisher: string,
     isLocalPublished?: boolean,
-    lamport_clock?: number,
+    lamportClock?: number,
     version?: number
-  ): void;
-  getDhtRecord(key: string): StoredValue | null;
-  deleteDhtRecord(key: string): void;
-  getAllUnexpiredDhtRecords(now?: number): Map<string, StoredValue>;
-  getLocalPublishedDhtRecords(now?: number): Array<{ key: string; value: any; expiresAt: number; publisher: string }>;
-  cleanupExpiredDhtRecords(now?: number): void;
+  ): Promise<void>;
+  getDhtRecord(key: string): Promise<StoredValue | null>;
+  deleteDhtRecord(key: string): Promise<void>;
+  getAllUnexpiredDhtRecords(now?: number): Promise<Map<string, StoredValue>>;
+  getLocalPublishedDhtRecords(now?: number): Promise<Array<{ key: string; value: any; expiresAt: number; publisher: string }>>;
+  cleanupExpiredDhtRecords(now?: number): Promise<void>;
 }
 
 /**
@@ -95,4 +95,3 @@ export function getBucketIndex(localId: string, targetId: string): number {
   const bitLength = dist.toString(2).length; // 1 đến 160
   return Math.max(0, Math.min(159, bitLength - 1));
 }
-

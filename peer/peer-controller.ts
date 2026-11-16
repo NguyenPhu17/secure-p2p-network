@@ -1,9 +1,11 @@
 /**
  * PeerController - Bộ điều phối cốt lõi của Peer Backend
- * Kết nối Registry, quản lý danh sách Peer, điều phối Chat 1-1, SQLite Store và Hàng đợi tin offline.
+ * Kết nối Registry, quản lý danh sách Peer, điều phối Chat 1-1, PostgreSQL Store và Hàng đợi tin offline.
  */
 
 import net from "node:net";
+import crypto from "node:crypto";
+import { Pool } from "pg";
 import {
   BaseMessage,
   MessageType,
@@ -23,6 +25,8 @@ import {
 import { IChannel } from "../common/channel.js";
 import { PlainChannel } from "./channel/plain-channel.js";
 import { MessageStore, MessageRecord } from "./db/message-store.js";
+import { UserService } from "./db/user-service.js";
+import { createDatabasePool } from "./db/connection.js";
 import { FileSender, FileTransferProgress } from "./transfer/file-sender.js";
 import { FileReceiver } from "./transfer/file-receiver.js";
 import { Logger } from "../common/logger.js";
@@ -43,6 +47,7 @@ export interface PeerControllerOptions {
   bootstrapPeers?: Array<{ ip: string; port: number }>;
   discoveryMode?: "dht" | "registry" | "hybrid";
   dbPath?: string;
+  pool?: Pool;
   downloadDir?: string;
   partitionHealingIntervalMs?: number;
 }
@@ -53,16 +58,21 @@ export class PeerController {
   public readonly displayName: string;
   public readonly tcpPort: number;
   public readonly ip: string;
-  public readonly publicKey: string;
-  private readonly privateKey: string;
-  public readonly nodeId: string;
+  public publicKey: string;
+  private privateKey: string;
+  public nodeId: string;
   public readonly discoveryMode: "dht" | "registry" | "hybrid";
   public readonly bootstrapPeers: Array<{ ip: string; port: number }>;
   private registryHost: string;
   private registryPort: number;
+  private pool: Pool;
+  private ownsPool = false;
+  private opts: PeerControllerOptions;
+  private knownPeersCache: Map<string, PeerInfo> = new Map();
 
   private logger: Logger;
-  private store: MessageStore;
+  private store!: MessageStore;
+  private userService: UserService;
   private channel: IChannel;
   private fileSender: FileSender;
   private fileReceiver: FileReceiver;
@@ -95,12 +105,22 @@ export class PeerController {
   public readonly vectorClock: VectorClock;
 
   constructor(opts: PeerControllerOptions) {
+    this.opts = opts;
     this.displayName = opts.displayName;
     this.tcpPort = opts.tcpPort;
     this.ip = opts.ip || "127.0.0.1";
     this.registryHost = opts.registryHost || config.registry.host;
     this.registryPort = opts.registryPort || config.registry.port;
     this.bootstrapPeers = opts.bootstrapPeers || [];
+
+    if (opts.pool) {
+      this.pool = opts.pool;
+      this.ownsPool = false;
+    } else {
+      this.pool = createDatabasePool();
+      this.ownsPool = true;
+    }
+    this.userService = new UserService(this.pool);
 
     // Tự động phân định chế độ Discovery:
     // 1. Nếu chỉ định opts.discoveryMode -> Dùng đúng mode đó
@@ -120,13 +140,9 @@ export class PeerController {
     this.logger = new Logger(`Peer:${this.displayName}`, config.peer.maxLogEntries);
     this.logger.enableFileLogging();
 
-    const dbFile = opts.dbPath || `data/${this.displayName}.db`;
-    this.store = new MessageStore(dbFile);
-
-    // Khôi phục Lamport Logical Clock từ SQLite DB để đảm bảo tính đơn điệu (Monotonicity)
-    const maxClock = this.store.getSavedLamportClock();
-    this.lamportClock = new LamportClock(maxClock);
-    this.vectorClock = new VectorClock({ [this.displayName]: maxClock });
+    // Khởi tạo Lamport Clock tạm thời (sẽ nạp từ DB trong start())
+    this.lamportClock = new LamportClock(0);
+    this.vectorClock = new VectorClock({ [this.displayName]: 0 });
 
     // Khởi tạo hoặc tải danh tính mật mã học (Ed25519 KeyPair & Node ID 160-bit SHA-1)
     if (opts.publicKey && opts.privateKey) {
@@ -134,10 +150,10 @@ export class PeerController {
       this.privateKey = opts.privateKey;
       this.nodeId = opts.nodeId || generateNodeIdFromPublicKey(this.publicKey);
     } else {
-      const identity = this.store.getOrGenerateIdentity(this.displayName);
-      this.publicKey = identity.publicKey;
-      this.privateKey = identity.privateKey;
-      this.nodeId = identity.nodeId;
+      const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+      this.publicKey = publicKey.export({ type: "spki", format: "pem" }).toString();
+      this.privateKey = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+      this.nodeId = generateNodeIdFromPublicKey(this.publicKey);
     }
 
     // Giai đoạn 1: Dùng PlainChannel
@@ -157,7 +173,7 @@ export class PeerController {
       opts.downloadDir
     );
 
-    // Khởi tạo Kademlia DHT Node tích hợp Persistent Storage SQLite
+    // Khởi tạo Kademlia DHT Node (persistentStore sẽ gắn trong start())
     this.dht = new DhtNode({
       displayName: this.displayName,
       ip: this.ip,
@@ -166,7 +182,7 @@ export class PeerController {
       nodeId: this.nodeId,
       channel: this.channel,
       logger: this.logger,
-      persistentStore: this.store,
+      persistentStore: undefined,
       bootstrapPeers: this.bootstrapPeers,
       partitionHealingIntervalMs: opts.partitionHealingIntervalMs
     });
@@ -188,9 +204,13 @@ export class PeerController {
           }
         }
         this.onlinePeers.set(peerKey, peer);
-        this.store.upsertPeer(peer);
-        this.emitPeerLists();
-        this.flushPendingMessages(peer.displayName);
+        this.knownPeersCache.set(peer.displayName, peer);
+        if (peer.nodeId) this.knownPeersCache.set(peer.nodeId.toLowerCase(), peer);
+        if (this.store) {
+          this.store.upsertPeer(peer).catch(() => {});
+        }
+        this.emitPeerLists().catch(() => {});
+        this.flushPendingMessages(peer.displayName).catch(() => {});
         // Tự động kéo tin nhắn offline từ Distributed Mailbox khi topology mạng mở rộng
         this.checkDistributedMailbox().catch(() => {});
       }
@@ -199,7 +219,7 @@ export class PeerController {
     this.dht.onPeerLeft((peer) => {
       const peerKey = this.getPeerKey(peer);
       this.onlinePeers.delete(peerKey);
-      this.emitPeerLists();
+      this.emitPeerLists().catch(() => {});
     });
   }
 
@@ -233,6 +253,10 @@ export class PeerController {
     return this.store;
   }
 
+  public getUserService(): UserService {
+    return this.userService;
+  }
+
   public getDhtNode(): DhtNode {
     return this.dht;
   }
@@ -255,9 +279,10 @@ export class PeerController {
     }
   }
 
-  private emitPeerLists(): void {
+  private async emitPeerLists(): Promise<void> {
     this.emitUI("PEER_LIST_UPDATE", this.getOnlinePeers());
-    this.emitUI("KNOWN_PEERS_UPDATE", this.getKnownPeersForUI());
+    const known = await this.getKnownPeersForUI();
+    this.emitUI("KNOWN_PEERS_UPDATE", known);
   }
 
   /**
@@ -268,6 +293,33 @@ export class PeerController {
       "SYSTEM",
       `Khởi động Peer Node '${this.displayName}' trên cổng TCP ${this.tcpPort}... [Chế độ Discovery: ${this.discoveryMode.toUpperCase()}]`
     );
+
+    // 0. Khởi tạo PostgreSQL MessageStore
+    this.store = await MessageStore.create(this.pool, this.displayName);
+    (this.dht as any).persistentStore = this.store;
+
+    // Khôi phục Lamport Logical Clock từ DB
+    const maxClock = await this.store.getSavedLamportClock();
+    (this as any).lamportClock = new LamportClock(maxClock);
+    (this as any).vectorClock = new VectorClock({ [this.displayName]: maxClock });
+
+    // Khôi phục hoặc tạo danh tính mật mã học bền vững từ DB
+    if (!this.opts.publicKey || !this.opts.privateKey) {
+      const identity = await this.store.getOrGenerateIdentity(this.displayName);
+      this.publicKey = identity.publicKey;
+      (this as any).privateKey = identity.privateKey;
+      this.nodeId = identity.nodeId;
+      (this.dht as any).localNodeId = identity.nodeId;
+      (this.dht as any).localInfo.nodeId = identity.nodeId;
+      (this.dht as any).localInfo.publicKey = identity.publicKey;
+    }
+
+    // Nạp cache danh sách known peers từ DB
+    const knownFromDb = await this.store.getKnownPeers();
+    for (const p of knownFromDb) {
+      this.knownPeersCache.set(p.displayName, p);
+      if (p.nodeId) this.knownPeersCache.set(p.nodeId.toLowerCase(), p);
+    }
 
     // 1. Khởi động P2P Channel
     await this.channel.init();
@@ -375,14 +427,18 @@ export class PeerController {
           for (const p of payload.peers) {
             if (p.displayName !== this.displayName) {
               this.onlinePeers.set(p.displayName, p);
-              this.store.upsertPeer(p);
+              this.knownPeersCache.set(p.displayName, p);
+              if (p.nodeId) this.knownPeersCache.set(p.nodeId.toLowerCase(), p);
+              if (this.store) {
+                this.store.upsertPeer(p).catch(() => {});
+              }
             }
           }
 
           // Bắt đầu gửi Heartbeat định kỳ 5s
           this.startHeartbeat();
 
-          this.emitPeerLists();
+          this.emitPeerLists().catch(() => {});
           if (onRegistered) onRegistered();
         } else {
           const err = new Error(`Đăng ký bị từ chối: ${payload.reason}`);
@@ -403,11 +459,15 @@ export class PeerController {
         if (p.displayName !== this.displayName) {
           this.logger.info("PROTOCOL", `Peer mới online: '${p.displayName}' (${p.ip}:${p.tcpPort})`);
           this.onlinePeers.set(p.displayName, p);
-          this.store.upsertPeer(p);
-          this.emitPeerLists();
+          this.knownPeersCache.set(p.displayName, p);
+          if (p.nodeId) this.knownPeersCache.set(p.nodeId.toLowerCase(), p);
+          if (this.store) {
+            this.store.upsertPeer(p).catch(() => {});
+          }
+          this.emitPeerLists().catch(() => {});
 
           // Khi peer đối tác vừa online, tự động gửi các tin nhắn đang chờ (Offline queue flush)
-          this.flushPendingMessages(p.displayName);
+          this.flushPendingMessages(p.displayName).catch(() => {});
         }
         break;
       }
@@ -416,7 +476,7 @@ export class PeerController {
         const payload = msg.payload as PeerLeftPayload;
         this.logger.warn("PROTOCOL", `Peer offline: '${payload.displayName}' (${payload.reason})`);
         this.onlinePeers.delete(payload.displayName);
-        this.emitPeerLists();
+        this.emitPeerLists().catch(() => {});
         break;
       }
     }
@@ -504,8 +564,8 @@ export class PeerController {
       return peer;
     }
 
-    // 4. Thử tìm trong SQLite store
-    const stored = this.store.getPeer(target);
+    // 4. Thử tìm trong knownPeersCache (đồng bộ từ PostgreSQL Store)
+    const stored = this.knownPeersCache.get(target) || this.knownPeersCache.get(target.toLowerCase());
     if (stored && !this.isSelfPeer(stored) && stored.displayName !== this.displayName) {
       return stored;
     }
@@ -522,7 +582,7 @@ export class PeerController {
     const all = [
       ...Array.from(this.onlinePeers.values()),
       ...this.dht.getKnownPeers(),
-      ...this.store.getKnownPeers()
+      ...Array.from(this.knownPeersCache.values())
     ];
 
     for (const p of all) {
@@ -855,13 +915,13 @@ export class PeerController {
     if (msg.type === MessageType.RELAY_ACK) {
       const ack = msg.payload as RelayAckPayload;
       if (ack.status === "DROPPED" && ack.innerMessageId) {
-        const rec = this.store.getMessage(ack.innerMessageId);
+        const rec = await this.store.getMessage(ack.innerMessageId);
         if (rec && rec.direction === "out" && rec.status !== "delivered") {
           this.logger.warn(
             "ROUTING",
             `⚠️ [RELAY DROPPED] Peer trung gian '${msg.sender}' không liên lạc được '${ack.finalReceiver}'. Chuyển tin nhắn ${rec.message_id} sang Distributed Mailbox trên DHT...`
           );
-          this.store.updateMessageStatus(rec.message_id, "pending");
+          await this.store.updateMessageStatus(rec.message_id, "pending");
           rec.status = "pending";
           this.emitUI("MESSAGE_STATUS_UPDATE", { message_id: rec.message_id, status: "pending" });
           await this.depositToDistributedMailbox(rec);
@@ -912,8 +972,8 @@ export class PeerController {
           relayed_by: relayedBy || null
         };
 
-        // Lưu vào SQLite với cơ chế Deduplication
-        const { isDuplicate } = this.store.saveMessage(record);
+        // Lưu vào DB với cơ chế Deduplication
+        const { isDuplicate } = await this.store.saveMessage(record);
 
         // Luôn gửi lại CHAT_ACK để bên gửi biết tin đã tới (kể cả khi nhận trùng lặp)
         // Ưu tiên gửi lại qua Relay nếu tin nhắn này đến qua Relay
@@ -930,7 +990,7 @@ export class PeerController {
 
       case MessageType.CHAT_ACK: {
         const payload = msg.payload as ChatAckPayload;
-        this.store.updateMessageStatus(payload.ack_message_id, "delivered", viaRoute, relayedBy);
+        await this.store.updateMessageStatus(payload.ack_message_id, "delivered", viaRoute, relayedBy);
         this.logger.info(
           "PROTOCOL",
           `Tin nhắn ${payload.ack_message_id} đã được ACK (delivered)${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}.`
@@ -955,7 +1015,7 @@ export class PeerController {
         );
 
         // Lưu thông tin file vào database
-        this.store.saveFileMeta({
+        await this.store.saveFileMeta({
           file_id: metaPayload.file_id,
           conversation_id: `conv_${msg.sender}`,
           file_name: metaPayload.fileName,
@@ -990,7 +1050,7 @@ export class PeerController {
           route: viaRoute || [msg.sender, this.displayName],
           relayed_by: relayedBy || null
         };
-        this.store.saveMessage(fileMsgRecord);
+        await this.store.saveMessage(fileMsgRecord);
         this.emitUI("NEW_MESSAGE", fileMsgRecord);
         break;
       }
@@ -1003,8 +1063,8 @@ export class PeerController {
           (prog) => {
             this.emitUI("FILE_PROGRESS", prog);
           },
-          (completed) => {
-            this.store.updateFileStatus(completed.file_id, "completed");
+          async (completed) => {
+            await this.store.updateFileStatus(completed.file_id, "completed");
             this.logger.info("SYSTEM", `Tệp ${completed.fileName} đã được lưu thành công tại: ${completed.localPath}`);
             this.emitUI("FILE_COMPLETED", completed);
           },
@@ -1054,7 +1114,7 @@ export class PeerController {
   public async sendChatMessage(receiver: string, body: string): Promise<MessageRecord> {
     const message_id = crypto.randomUUID();
     const now = Date.now();
-    const seq = this.store.getNextSeq(receiver);
+    const seq = await this.store.getNextSeq(receiver);
     const clock = this.lamportClock.tick();
     const vclock = this.vectorClock.tick(this.displayName);
 
@@ -1076,8 +1136,8 @@ export class PeerController {
       mac_or_signature: null
     };
 
-    // 1. Lưu tin nhắn vào SQLite với trạng thái ban đầu là "pending"
-    this.store.saveMessage(record);
+    // 1. Lưu tin nhắn vào DB với trạng thái ban đầu là "pending"
+    await this.store.saveMessage(record);
     this.emitUI("NEW_MESSAGE", record);
 
     // 2. Thử gửi (Direct P2P trước, tự động Relay nếu direct lỗi)
@@ -1118,7 +1178,7 @@ export class PeerController {
 
     const res = await this.sendMessageToPeer(record.receiver, chatMsg);
     if (res.success) {
-      this.store.updateMessageStatus(record.message_id, "sent", res.route, res.relayedVia);
+      await this.store.updateMessageStatus(record.message_id, "sent", res.route, res.relayedVia);
       record.status = "sent";
       record.route = res.route;
       record.relayed_by = res.relayedVia;
@@ -1234,7 +1294,7 @@ export class PeerController {
           relayed_by: "DHT_MAILBOX"
         };
 
-        const { isDuplicate } = this.store.saveMessage(record);
+        const { isDuplicate } = await this.store.saveMessage(record);
         if (!isDuplicate) {
           newCount++;
           this.logger.info(
@@ -1252,7 +1312,7 @@ export class PeerController {
       }
 
       if (newCount > 0) {
-        this.emitPeerLists();
+        this.emitPeerLists().catch(() => {});
       }
 
       // Xóa các tin nhắn đã đọc khỏi Distributed Mailbox trên DHT
@@ -1287,7 +1347,7 @@ export class PeerController {
    * Tự động gửi lại các tin nhắn pending khi peer đối tác vừa online (Offline Queue)
    */
   public async flushPendingMessages(peerName: string): Promise<void> {
-    const pendingList = this.store.getPendingMessages(peerName);
+    const pendingList = await this.store.getPendingMessages(peerName);
     if (pendingList.length > 0) {
       this.logger.info("PROTOCOL", `Đang gửi lại ${pendingList.length} tin nhắn pending cho '${peerName}'...`);
       for (const msg of pendingList) {
@@ -1319,7 +1379,7 @@ export class PeerController {
         sender: this.displayName,
         receiver,
         direction: "out",
-        seq: this.store.getNextSeq(receiver),
+        seq: await this.store.getNextSeq(receiver),
         timestamp: Date.now(),
         lamport_clock: fileClock,
         vector_clock: fileVector,
@@ -1331,7 +1391,7 @@ export class PeerController {
         route: res.route || (res.relayedVia ? [this.displayName, res.relayedVia, receiver] : [this.displayName, receiver]),
         relayed_by: res.relayedVia || null
       };
-      this.store.saveMessage(fileMsgRecord);
+      await this.store.saveMessage(fileMsgRecord);
       this.emitUI("NEW_MESSAGE", fileMsgRecord);
     }
 
@@ -1361,7 +1421,7 @@ export class PeerController {
    * Trả về danh sách đầy đủ các Peer cho UI Sidebar:
    * bao gồm cả peer đang ONLINE (online: true) và peer từng biết / từng chat nhưng hiện OFFLINE (online: false).
    */
-  public getKnownPeersForUI(): PeerInfo[] {
+  public async getKnownPeersForUI(): Promise<PeerInfo[]> {
     const online = this.getOnlinePeers();
     const onlineList: PeerInfo[] = online.map((p) => ({ ...p, online: true }));
     const seenNames = new Set(onlineList.map((p) => p.displayName));
@@ -1369,7 +1429,8 @@ export class PeerController {
 
     const offlineList: PeerInfo[] = [];
 
-    for (const p of this.store.getKnownPeers()) {
+    const storedPeers = await this.store.getKnownPeers();
+    for (const p of storedPeers) {
       if (this.isSelfPeer(p) || p.displayName === this.displayName) continue;
       if (seenNames.has(p.displayName)) continue;
       if (p.nodeId && seenIds.has(p.nodeId.toLowerCase())) continue;
@@ -1379,7 +1440,8 @@ export class PeerController {
       offlineList.push({ ...p, online: false });
     }
 
-    for (const convPeer of this.store.getConversationPeers()) {
+    const convPeers = await this.store.getConversationPeers();
+    for (const convPeer of convPeers) {
       if (convPeer === this.displayName || seenNames.has(convPeer)) continue;
       seenNames.add(convPeer);
       offlineList.push({
@@ -1405,22 +1467,22 @@ export class PeerController {
   public async healPartition(): Promise<boolean> {
     const healed = await this.dht.healPartition();
     if (healed) {
-      this.emitPeerLists();
+      await this.emitPeerLists();
       await this.checkDistributedMailbox();
     }
     return healed;
   }
 
-  public getKnownPeers(): PeerInfo[] {
-    return this.store.getKnownPeers();
+  public async getKnownPeers(): Promise<PeerInfo[]> {
+    return await this.store.getKnownPeers();
   }
 
-  public getChatHistory(peer: string, limit = 50, beforeClockOrTimestamp?: number): MessageRecord[] {
-    return this.store.getHistory(peer, limit, beforeClockOrTimestamp);
+  public async getChatHistory(peer: string, limit = 50, beforeClockOrTimestamp?: number): Promise<MessageRecord[]> {
+    return await this.store.getHistory(peer, limit, beforeClockOrTimestamp);
   }
 
-  public deleteChatHistory(peer: string): void {
-    this.store.deleteConversation(peer);
+  public async deleteChatHistory(peer: string): Promise<void> {
+    await this.store.deleteConversation(peer);
     this.emitUI("CHAT_HISTORY_CLEARED", { peer });
   }
 
@@ -1441,9 +1503,16 @@ export class PeerController {
     }
     await this.channel.close();
     try {
-      this.store.saveLamportClock(this.lamportClock.getClock());
+      if (this.store) {
+        await this.store.saveLamportClock(this.lamportClock.getClock());
+      }
     } catch {}
-    this.store.close();
+    if (this.store) {
+      await this.store.close();
+    }
+    if (this.ownsPool && this.pool) {
+      await this.pool.end();
+    }
     this.logger.close();
   }
 }

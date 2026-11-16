@@ -87,8 +87,8 @@ async function runMeshRelayRoutingTest() {
   const directMsg = await alice.sendChatMessage("Bob", "Xin chào Bob qua Direct Socket!");
   await new Promise((r) => setTimeout(r, 600));
 
-  const bobDirectHistory = bob.getChatHistory("Alice");
-  const aliceDirectHistory = alice.getChatHistory("Bob");
+  const bobDirectHistory = await bob.getChatHistory("Alice");
+  const aliceDirectHistory = await alice.getChatHistory("Bob");
 
   console.log(`   - Trạng thái tin gửi phía Alice: [${aliceDirectHistory[0]?.status}]`);
   console.log(`   - Tuyến đường ghi nhận: [${aliceDirectHistory[0]?.route?.join(" ➔ ") || "Direct"}]`);
@@ -121,7 +121,7 @@ async function runMeshRelayRoutingTest() {
   // Đợi gói tin đi qua Charlie và Bob gửi lại ACK qua Charlie về Alice
   await new Promise((r) => setTimeout(r, 1200));
 
-  const bobRelayHistory = bob.getChatHistory("Alice");
+  const bobRelayHistory = await bob.getChatHistory("Alice");
   const receivedMsg = bobRelayHistory.find((m) => m.message_id === relayMsg.message_id);
 
   if (!receivedMsg) {
@@ -133,7 +133,7 @@ async function runMeshRelayRoutingTest() {
   console.log(`   - Tuyến đường Mesh  : [${receivedMsg.route?.join(" ➔ ")}]`);
   console.log(`   - Chuyển tiếp bởi   : '${receivedMsg.relayed_by}'`);
 
-  const aliceRelayHistory = alice.getChatHistory("Bob");
+  const aliceRelayHistory = await alice.getChatHistory("Bob");
   const ackedMsg = aliceRelayHistory.find((m) => m.message_id === relayMsg.message_id);
 
   console.log(`\n   🎯 KẾT QUẢ PHẢN HỒI ACK PHÍA ALICE:`);
@@ -157,8 +157,8 @@ async function runMeshRelayRoutingTest() {
   const bobReply = await bob.sendChatMessage("Alice", "Tuyệt vời Alice! Mình nhận được qua Charlie rồi nhé.");
   await new Promise((r) => setTimeout(r, 1000));
 
-  const aliceReceivedReply = alice.getChatHistory("Bob").find((m) => m.message_id === bobReply.message_id);
-  const bobReplyStatus = bob.getChatHistory("Alice").find((m) => m.message_id === bobReply.message_id);
+  const aliceReceivedReply = (await alice.getChatHistory("Bob")).find((m) => m.message_id === bobReply.message_id);
+  const bobReplyStatus = (await bob.getChatHistory("Alice")).find((m) => m.message_id === bobReply.message_id);
 
   console.log(`   - Bob gửi trạng thái : [${bobReplyStatus?.status}] (Relayed via: ${bobReplyStatus?.relayed_by})`);
   console.log(`   - Alice nhận nội dung: '${aliceReceivedReply?.body}' (Tuyến: [${aliceReceivedReply?.route?.join(" ➔ ")}])`);
@@ -209,8 +209,8 @@ async function runMeshRelayRoutingTest() {
   }
 
   // Kiểm tra lịch sử chat có lưu thông tin file và tuyến đường relay không
-  const bobFileMsgs = bob.getChatHistory("Alice").filter((m) => m.type === "file");
-  const aliceFileMsgs = alice.getChatHistory("Bob").filter((m) => m.type === "file");
+  const bobFileMsgs = (await bob.getChatHistory("Alice")).filter((m) => m.type === "file");
+  const aliceFileMsgs = (await alice.getChatHistory("Bob")).filter((m) => m.type === "file");
 
   if (bobFileMsgs.length === 0 || aliceFileMsgs.length === 0) {
     throw new Error("[BƯỚC 5B FAILED] Không tìm thấy bản ghi tin nhắn file trong cơ sở dữ liệu!");
@@ -268,7 +268,7 @@ async function runMeshRelayRoutingTest() {
   await new Promise((r) => setTimeout(r, 400));
 
   // Kiểm tra Bob không bị nhận gói tin lặp này
-  const bobMessages = bob.getChatHistory("Alice");
+  const bobMessages = await bob.getChatHistory("Alice");
   const loopReceived = bobMessages.some((m) => m.body === "Tin nhắn lặp vòng");
   if (loopReceived) {
     throw new Error("[BƯỚC 6 FAILED] Router không chặn gói tin lặp vòng định tuyến!");
@@ -312,7 +312,7 @@ async function runMeshRelayRoutingTest() {
   await (alice as any).channel.sendMessage("127.0.0.1", 8703, ttlExceededPacket);
   await new Promise((r) => setTimeout(r, 400));
 
-  const ttlReceived = bob.getChatHistory("Alice").some((m) => m.body === "Tin nhắn quá số chặng");
+  const ttlReceived = (await bob.getChatHistory("Alice")).some((m) => m.body === "Tin nhắn quá số chặng");
   if (ttlReceived) {
     throw new Error("[BƯỚC 7 FAILED] Router không hủy gói tin khi vượt quá TTL!");
   }
@@ -328,7 +328,7 @@ async function runMeshRelayRoutingTest() {
   const restoredMsg = await alice.sendChatMessage("Bob", "Đường truyền trực tiếp đã mở lại rồi!");
   await new Promise((r) => setTimeout(r, 600));
 
-  const finalAliceHistory = alice.getChatHistory("Bob");
+  const finalAliceHistory = await alice.getChatHistory("Bob");
   const lastMsg = finalAliceHistory[0];
 
   console.log(`   - Trạng thái tin gửi : [${lastMsg?.status}]`);

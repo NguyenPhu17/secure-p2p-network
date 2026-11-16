@@ -11,8 +11,8 @@ COPY common/ ./common/
 COPY registry/ ./registry/
 COPY peer/ ./peer/
 
-# Tạo thư mục dữ liệu, downloads, logs
-RUN mkdir -p data downloads logs
+# Tạo thư mục downloads, logs
+RUN mkdir -p downloads logs
 
 CMD ["npm", "run", "registry"]
 

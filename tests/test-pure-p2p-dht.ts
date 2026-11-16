@@ -114,9 +114,9 @@ async function runPureP2PDhtTest() {
 
   await new Promise((r) => setTimeout(r, 800));
 
-  const hAlice = alice.getChatHistory("Bob");
-  const hBob = bob.getChatHistory("Charlie");
-  const hCharlie = charlie.getChatHistory("Alice");
+  const hAlice = await alice.getChatHistory("Bob");
+  const hBob = await bob.getChatHistory("Charlie");
+  const hCharlie = await charlie.getChatHistory("Alice");
 
   if (hAlice[0]?.status !== "delivered" || hBob[0]?.status !== "delivered" || hCharlie[0]?.status !== "delivered") {
     throw new Error("[BƯỚC 2 FAILED] Tin nhắn không nhận được ACK delivered qua kênh Direct P2P!");
@@ -185,7 +185,7 @@ async function runPureP2PDhtTest() {
   const bobToCharlieMsg = await bob.sendChatMessage("Charlie", "Alice đã sập, nhưng mạng DHT chúng mình vẫn sống!");
   await new Promise((r) => setTimeout(r, 600));
 
-  const bobHistory = bob.getChatHistory("Charlie");
+  const bobHistory = await bob.getChatHistory("Charlie");
   if (bobHistory[0]?.status !== "delivered") {
     throw new Error("[BƯỚC 4 FAILED] Bob không gửi được tin nhắn cho Charlie khi Alice chết!");
   }
@@ -217,7 +217,7 @@ async function runPureP2PDhtTest() {
   console.log("   Đang chờ Charlie phát hiện Alice online và tự động gửi bù tin pending...");
   await new Promise((r) => setTimeout(r, 1500));
 
-  const charlieHistoryAfterRevival = charlie.getChatHistory("Alice");
+  const charlieHistoryAfterRevival = await charlie.getChatHistory("Alice");
   const deliveredMsg = charlieHistoryAfterRevival.find((m) => m.message_id === charlieOfflineMsg.message_id);
 
   console.log(`   - Trạng thái tin nhắn sau khi Alice online: [${deliveredMsg?.status}]`);
