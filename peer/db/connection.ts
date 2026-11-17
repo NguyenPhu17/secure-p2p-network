@@ -11,11 +11,11 @@ import { config } from "../../common/config.js";
  */
 export function createDatabasePool(override?: Partial<PoolConfig>): Pool {
   return new Pool({
-    host: override?.host ?? config.database.host,
-    port: override?.port ?? config.database.port,
-    database: override?.database ?? config.database.database,
-    user: override?.user ?? config.database.user,
-    password: override?.password ?? config.database.password,
+    host: override?.host ?? process.env.DB_HOST ?? config.database.host,
+    port: override?.port ?? (process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : config.database.port),
+    database: override?.database ?? process.env.DB_NAME ?? config.database.database,
+    user: override?.user ?? process.env.DB_USER ?? config.database.user,
+    password: override?.password ?? process.env.DB_PASSWORD ?? config.database.password,
     max: override?.max ?? config.database.max,
     ...override
   });

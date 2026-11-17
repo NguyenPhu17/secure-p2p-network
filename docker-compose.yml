@@ -1,4 +1,19 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: p2p-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: p2p_network
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 27082005
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - p2p-net
+
   registry:
     build:
       context: .
@@ -28,16 +43,16 @@ services:
       - PEER_UI_PORT=3001
       - DISCOVERY_MODE=dht
       - BOOTSTRAP_PEERS=
-      - DB_HOST=host.docker.internal
+      - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
       - DB_USER=postgres
       - DB_PASSWORD=27082005
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./downloads:/app/downloads
       - ./logs:/app/logs
+    depends_on:
+      - postgres
     networks:
       - p2p-net
 
@@ -57,16 +72,16 @@ services:
       - PEER_UI_PORT=3002
       - DISCOVERY_MODE=dht
       - BOOTSTRAP_PEERS=peer-alice:8001,peer-charlie:8003
-      - DB_HOST=host.docker.internal
+      - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
       - DB_USER=postgres
       - DB_PASSWORD=27082005
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./downloads:/app/downloads
       - ./logs:/app/logs
+    depends_on:
+      - postgres
     networks:
       - p2p-net
 
@@ -86,16 +101,16 @@ services:
       - PEER_UI_PORT=3003
       - DISCOVERY_MODE=dht
       - BOOTSTRAP_PEERS=peer-bob:8002,peer-alice:8001
-      - DB_HOST=host.docker.internal
+      - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
       - DB_USER=postgres
       - DB_PASSWORD=27082005
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./downloads:/app/downloads
       - ./logs:/app/logs
+    depends_on:
+      - postgres
     networks:
       - p2p-net
 
@@ -115,16 +130,16 @@ services:
       - PEER_UI_PORT=3004
       - DISCOVERY_MODE=dht
       - BOOTSTRAP_PEERS=peer-alice:8001,peer-bob:8002
-      - DB_HOST=host.docker.internal
+      - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
       - DB_USER=postgres
       - DB_PASSWORD=27082005
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./downloads:/app/downloads
       - ./logs:/app/logs
+    depends_on:
+      - postgres
     networks:
       - p2p-net
 
@@ -140,8 +155,12 @@ services:
       - peer-alice
       - peer-bob
       - peer-charlie
+      - peer-david
     networks:
       - p2p-net
+
+volumes:
+  postgres_data:
 
 networks:
   p2p-net:
