@@ -7,11 +7,13 @@ import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { PeerController } from "../peer-controller.js";
 import { Logger, LogEntry } from "../../common/logger.js";
+import { MetricsCollector } from "../metrics/metrics-collector.js";
 
 export class UIBridge {
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
   private clients: Set<WebSocket> = new Set();
+  private metrics = MetricsCollector.getInstance();
 
   constructor(
     private peerController: PeerController,
@@ -98,6 +100,28 @@ export class UIBridge {
           } catch (e: any) {
             res.writeHead(500, corsHeaders);
             res.end(JSON.stringify({ valid: false, error: e.message }));
+          }
+          return;
+        }
+
+        // Endpoint xuất dữ liệu giám sát cho Prometheus: GET /metrics
+        if (url === "/metrics" && req.method === "GET") {
+          try {
+            this.metrics.activePeersGauge.set(
+              { node: this.peerController.displayName },
+              this.peerController.getOnlinePeers().length
+            );
+            this.metrics.lamportClockGauge.set(
+              { node: this.peerController.displayName },
+              this.peerController.lamportClock.getClock()
+            );
+
+            const metricsText = await this.metrics.getMetricsText();
+            res.writeHead(200, { "Content-Type": this.metrics.getContentType() });
+            res.end(metricsText);
+          } catch (e: any) {
+            res.writeHead(500, { "Content-Type": "text/plain" });
+            res.end(`Lỗi Prometheus Metrics: ${e.message}`);
           }
           return;
         }

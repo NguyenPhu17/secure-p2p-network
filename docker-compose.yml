@@ -128,6 +128,21 @@ services:
     networks:
       - p2p-net
 
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: p2p-ui
+    ports:
+      - "80:80"
+      - "5173:80"
+    depends_on:
+      - peer-alice
+      - peer-bob
+      - peer-charlie
+    networks:
+      - p2p-net
+
 networks:
   p2p-net:
     driver: bridge

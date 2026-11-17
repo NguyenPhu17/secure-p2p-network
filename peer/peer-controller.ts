@@ -34,6 +34,7 @@ import { config } from "../common/config.js";
 import { FrameDecoder, encodeFrame } from "../common/framing.js";
 import { DhtNode } from "./dht/dht-node.js";
 import { getMailboxKey, MailboxMessage, generateNodeIdFromPublicKey } from "./dht/dht-types.js";
+import { MetricsCollector } from "./metrics/metrics-collector.js";
 
 export interface PeerControllerOptions {
   displayName: string;
@@ -1139,6 +1140,7 @@ export class PeerController {
     // 1. Lưu tin nhắn vào DB với trạng thái ban đầu là "pending"
     await this.store.saveMessage(record);
     this.emitUI("NEW_MESSAGE", record);
+    MetricsCollector.getInstance().messagesCounter.inc({ node: this.displayName, direction: "out", type: "chat" });
 
     // 2. Thử gửi (Direct P2P trước, tự động Relay nếu direct lỗi)
     await this.attemptSendMessage(record);
