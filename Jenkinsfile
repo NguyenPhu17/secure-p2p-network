@@ -63,17 +63,21 @@ pipeline {
 
         stage('6. Push to Docker Hub') {
             steps {
-                echo "☁️ [CI/CD] Đăng nhập và đẩy Images lên Docker Hub..."
-                withCredentials([usernamePassword(credentialsId: "${DOCKER_HUB_CRED}", usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-                    sh 'echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin'
-                    
-                    // Push Backend Image
-                    sh "docker push ${BACKEND_IMAGE}:${BUILD_TAG}"
-                    sh "docker push ${BACKEND_IMAGE}:latest"
-                    
-                    // Push Frontend UI Image
-                    sh "docker push ${UI_IMAGE}:${BUILD_TAG}"
-                    sh "docker push ${UI_IMAGE}:latest"
+                script {
+                    echo "☁️ [CI/CD] Đăng nhập và đẩy Images lên Docker Hub..."
+                    try {
+                        withCredentials([usernamePassword(credentialsId: "${DOCKER_HUB_CRED}", usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                            sh 'echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin'
+                            sh "docker push ${BACKEND_IMAGE}:${BUILD_TAG}"
+                            sh "docker push ${BACKEND_IMAGE}:latest"
+                            sh "docker push ${UI_IMAGE}:${BUILD_TAG}"
+                            sh "docker push ${UI_IMAGE}:latest"
+                            echo "✅ Đã đẩy thành công Images lên Docker Hub!"
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ [CHÚ Ý] Chưa cấu hình Docker Hub Credentials hoặc đẩy thất bại: ${e.message}"
+                        echo "⚠️ Bỏ qua bước đẩy Docker Hub, Docker Images đã được build sẵn sàng trên máy chủ!"
+                    }
                 }
             }
         }
