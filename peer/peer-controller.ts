@@ -56,7 +56,7 @@ export interface PeerControllerOptions {
 export type UIEventCallback = (event: string, data: any) => void;
 
 export class PeerController {
-  public readonly displayName: string;
+  public displayName: string;
   public readonly tcpPort: number;
   public readonly ip: string;
   public publicKey: string;
@@ -240,6 +240,13 @@ export class PeerController {
       return true;
     }
     return false;
+  }
+
+  public setDisplayName(name: string): void {
+    if (name && name !== this.displayName) {
+      this.displayName = name;
+      this.logger.info("SYSTEM", `Đã cập nhật danh tính node: ${name}`);
+    }
   }
 
   private getPeerKey(peer: PeerInfo): string {

@@ -19,18 +19,20 @@ export class UIBridge {
 
   // Bản đồ ánh xạ mặc định giữa UI Port và Tên Node Container P2P
   private portToNodeMap: Record<number, string> = {
-    3001: "Alice",
-    3002: "Bob",
-    3003: "Charlie",
-    3004: "David"
+    3001: "peer-1",
+    3002: "peer-2",
+    3003: "peer-3",
+    3004: "peer-4"
   };
 
   private nodeToPortMap: Record<string, number> = {
-    "Alice": 3001,
-    "Bob": 3002,
-    "Charlie": 3003,
-    "David": 3004
+    "peer-1": 3001,
+    "peer-2": 3002,
+    "peer-3": 3003,
+    "peer-4": 3004
   };
+
+  private activeUsername: string | null = null;
 
   constructor(
     private peerController: PeerController,
@@ -51,8 +53,21 @@ export class UIBridge {
       const onlineNodes = this.peerController.getOnlinePeers();
       const now = Date.now();
 
+      // Cập nhật bản đồ ánh xạ tài khoản -> node từ DB
+      for (const u of users) {
+        if (u.nodePort) {
+          const userName = u.username;
+          this.portToNodeMap[u.nodePort] = userName;
+          this.nodeToPortMap[userName] = u.nodePort;
+        }
+      }
+
       // Xác định tên hiển thị của tài khoản gán cho node hiện tại
       const localUser = users.find((u) => u.nodePort === this.uiPort);
+      if (localUser) {
+        this.activeUsername = localUser.username;
+        this.peerController.setDisplayName(localUser.username);
+      }
       const meName = localUser
         ? (localUser.displayName || localUser.username)
         : this.peerController.displayName;
@@ -253,12 +268,13 @@ export class UIBridge {
         // Endpoint xuất dữ liệu giám sát cho Prometheus: GET /metrics
         if (cleanPath === "/metrics" && req.method === "GET") {
           try {
+            const nodeLabel = this.activeUsername || this.peerController.displayName;
             this.metrics.activePeersGauge.set(
-              { node: this.peerController.displayName },
+              { node: nodeLabel },
               this.peerController.getOnlinePeers().length
             );
             this.metrics.lamportClockGauge.set(
-              { node: this.peerController.displayName },
+              { node: nodeLabel },
               this.peerController.lamportClock.getClock()
             );
 

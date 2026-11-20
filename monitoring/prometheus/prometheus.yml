@@ -19,7 +19,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "peer-alice:3001"
-          - "peer-bob:3002"
-          - "peer-charlie:3003"
-          - "peer-david:3004"
+          - "peer-1:3001"
+          - "peer-2:3002"
+          - "peer-3:3003"
+          - "peer-4:3004"

@@ -27,18 +27,18 @@ services:
     networks:
       - p2p-net
 
-  peer-alice:
+  peer-1:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: p2p-peer-alice
+    container_name: p2p-peer-1
     command: npx tsx peer/index.ts
     ports:
       - "8001:8001"
       - "3001:3001"
     environment:
-      - PEER_NAME=Alice
-      - PEER_ADVERTISE_IP=peer-alice
+      - PEER_NAME=Node-1
+      - PEER_ADVERTISE_IP=peer-1
       - PEER_TCP_PORT=8001
       - PEER_UI_PORT=3001
       - DISCOVERY_MODE=dht
@@ -56,22 +56,22 @@ services:
     networks:
       - p2p-net
 
-  peer-bob:
+  peer-2:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: p2p-peer-bob
+    container_name: p2p-peer-2
     command: npx tsx peer/index.ts
     ports:
       - "8002:8002"
       - "3002:3002"
     environment:
-      - PEER_NAME=Bob
-      - PEER_ADVERTISE_IP=peer-bob
+      - PEER_NAME=Node-2
+      - PEER_ADVERTISE_IP=peer-2
       - PEER_TCP_PORT=8002
       - PEER_UI_PORT=3002
       - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=peer-alice:8001,peer-charlie:8003
+      - BOOTSTRAP_PEERS=peer-1:8001,peer-3:8003
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
@@ -85,22 +85,22 @@ services:
     networks:
       - p2p-net
 
-  peer-charlie:
+  peer-3:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: p2p-peer-charlie
+    container_name: p2p-peer-3
     command: npx tsx peer/index.ts
     ports:
       - "8003:8003"
       - "3003:3003"
     environment:
-      - PEER_NAME=Charlie
-      - PEER_ADVERTISE_IP=peer-charlie
+      - PEER_NAME=Node-3
+      - PEER_ADVERTISE_IP=peer-3
       - PEER_TCP_PORT=8003
       - PEER_UI_PORT=3003
       - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=peer-bob:8002,peer-alice:8001
+      - BOOTSTRAP_PEERS=peer-2:8002,peer-1:8001
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
@@ -114,22 +114,22 @@ services:
     networks:
       - p2p-net
 
-  peer-david:
+  peer-4:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: p2p-peer-david
+    container_name: p2p-peer-4
     command: npx tsx peer/index.ts
     ports:
       - "8004:8004"
       - "3004:3004"
     environment:
-      - PEER_NAME=David
-      - PEER_ADVERTISE_IP=peer-david
+      - PEER_NAME=Node-4
+      - PEER_ADVERTISE_IP=peer-4
       - PEER_TCP_PORT=8004
       - PEER_UI_PORT=3004
       - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=peer-alice:8001,peer-bob:8002
+      - BOOTSTRAP_PEERS=peer-1:8001,peer-2:8002
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
@@ -152,10 +152,10 @@ services:
       - "80:80"
       - "5173:80"
     depends_on:
-      - peer-alice
-      - peer-bob
-      - peer-charlie
-      - peer-david
+      - peer-1
+      - peer-2
+      - peer-3
+      - peer-4
     networks:
       - p2p-net
 
@@ -225,7 +225,9 @@ services:
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/sys:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
     ports:
