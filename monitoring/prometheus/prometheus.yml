@@ -19,7 +19,9 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "peer-1:3001"
-          - "peer-2:3002"
-          - "peer-3:3003"
-          - "peer-4:3004"
+          - "manager:3001"
+          - "manager:3002"
+          - "manager:3003"
+          - "manager:3004"
+          - "manager:3005"
+          - "manager:3006"

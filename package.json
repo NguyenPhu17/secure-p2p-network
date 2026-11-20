@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "registry": "tsx registry/index.ts",
+    "manager": "tsx manager/index.ts",
     "peer": "tsx peer/index.ts",
     "test:dht:unit": "tsx tests/test-dht-unit.ts",
     "test:dht": "tsx tests/test-pure-p2p-dht.ts",

@@ -14,122 +14,19 @@ services:
     networks:
       - p2p-net
 
-  registry:
+  manager:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: p2p-registry
-    command: npm run registry
+    container_name: p2p-manager
+    command: npm run manager
     ports:
       - "7000:7000"
+      - "3001-3010:3001-3010"
+      - "8001-8010:8001-8010"
     environment:
+      - MANAGER_PORT=3000
       - REGISTRY_PORT=7000
-    networks:
-      - p2p-net
-
-  peer-1:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: p2p-peer-1
-    command: npx tsx peer/index.ts
-    ports:
-      - "8001:8001"
-      - "3001:3001"
-    environment:
-      - PEER_NAME=Node-1
-      - PEER_ADVERTISE_IP=peer-1
-      - PEER_TCP_PORT=8001
-      - PEER_UI_PORT=3001
-      - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=p2p_network
-      - DB_USER=postgres
-      - DB_PASSWORD=27082005
-    volumes:
-      - ./downloads:/app/downloads
-      - ./logs:/app/logs
-    depends_on:
-      - postgres
-    networks:
-      - p2p-net
-
-  peer-2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: p2p-peer-2
-    command: npx tsx peer/index.ts
-    ports:
-      - "8002:8002"
-      - "3002:3002"
-    environment:
-      - PEER_NAME=Node-2
-      - PEER_ADVERTISE_IP=peer-2
-      - PEER_TCP_PORT=8002
-      - PEER_UI_PORT=3002
-      - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=peer-1:8001,peer-3:8003
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=p2p_network
-      - DB_USER=postgres
-      - DB_PASSWORD=27082005
-    volumes:
-      - ./downloads:/app/downloads
-      - ./logs:/app/logs
-    depends_on:
-      - postgres
-    networks:
-      - p2p-net
-
-  peer-3:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: p2p-peer-3
-    command: npx tsx peer/index.ts
-    ports:
-      - "8003:8003"
-      - "3003:3003"
-    environment:
-      - PEER_NAME=Node-3
-      - PEER_ADVERTISE_IP=peer-3
-      - PEER_TCP_PORT=8003
-      - PEER_UI_PORT=3003
-      - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=peer-2:8002,peer-1:8001
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=p2p_network
-      - DB_USER=postgres
-      - DB_PASSWORD=27082005
-    volumes:
-      - ./downloads:/app/downloads
-      - ./logs:/app/logs
-    depends_on:
-      - postgres
-    networks:
-      - p2p-net
-
-  peer-4:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: p2p-peer-4
-    command: npx tsx peer/index.ts
-    ports:
-      - "8004:8004"
-      - "3004:3004"
-    environment:
-      - PEER_NAME=Node-4
-      - PEER_ADVERTISE_IP=peer-4
-      - PEER_TCP_PORT=8004
-      - PEER_UI_PORT=3004
-      - DISCOVERY_MODE=dht
-      - BOOTSTRAP_PEERS=peer-1:8001,peer-2:8002
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=p2p_network
@@ -152,10 +49,7 @@ services:
       - "80:80"
       - "5173:80"
     depends_on:
-      - peer-1
-      - peer-2
-      - peer-3
-      - peer-4
+      - manager
     networks:
       - p2p-net
 

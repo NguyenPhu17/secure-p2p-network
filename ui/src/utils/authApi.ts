@@ -47,8 +47,21 @@ export function checkPasswordStrength(password: string): PasswordRuleCheck {
 const CANDIDATE_PORTS = [3001, 3002, 3003, 3004, 3005];
 
 /**
- * Tạo URL gọi API thông minh:
- * - Hỗ trợ cả Localhost, IP mạng LAN và Domain Reverse Proxy (Port 80 / HTTPS Tunnel)
+ * URL Central Gateway
+ */
+function getCentralAuthUrl(path: string): string {
+  if (typeof window === "undefined") {
+    return `http://localhost:3000${path}`;
+  }
+  const isReverseProxy = window.location.protocol === "https:" || window.location.port === "80" || window.location.port === "";
+  if (isReverseProxy) {
+    return `${window.location.origin}${path}`;
+  }
+  return `http://${window.location.hostname}:3000${path}`;
+}
+
+/**
+ * Fallback URL cho từng Node riêng biệt
  */
 function getEndpointUrl(port: number, path: string): string {
   if (typeof window === "undefined") {
@@ -65,6 +78,20 @@ function getEndpointUrl(port: number, path: string): string {
  * Gửi yêu cầu đăng nhập
  */
 export async function apiLogin(username: string, password: string, currentPort?: number): Promise<AuthResponse> {
+  // 1. Thử Central Auth Gateway trước
+  try {
+    const centralUrl = getCentralAuthUrl("/api/auth/login");
+    const res = await fetch(centralUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    return data;
+  } catch {
+    // Fallback sang Candidate Ports nếu cần
+  }
+
   const portsToTry = currentPort
     ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
     : CANDIDATE_PORTS;
@@ -97,6 +124,20 @@ export async function apiRegister(
   nodePort?: number,
   currentPort?: number
 ): Promise<AuthResponse> {
+  // 1. Thử Central Auth Gateway trước
+  try {
+    const centralUrl = getCentralAuthUrl("/api/auth/register");
+    const res = await fetch(centralUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, displayName, nodePort })
+    });
+    const data = await res.json();
+    return data;
+  } catch {
+    // Fallback sang Candidate Ports nếu cần
+  }
+
   const portsToTry = currentPort
     ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
     : CANDIDATE_PORTS;
@@ -124,6 +165,20 @@ export async function apiRegister(
  */
 export async function apiVerifyToken(token: string, currentPort?: number): Promise<{ valid: boolean; user?: AuthUser; error?: string }> {
   if (!token) return { valid: false, error: "Token rỗng" };
+
+  // 1. Thử Central Auth Gateway trước
+  try {
+    const centralUrl = getCentralAuthUrl("/api/auth/verify");
+    const res = await fetch(centralUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    return data;
+  } catch {
+    // Fallback sang Candidate Ports nếu cần
+  }
+
   const portsToTry = currentPort
     ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
     : CANDIDATE_PORTS;
@@ -150,6 +205,17 @@ export async function apiVerifyToken(token: string, currentPort?: number): Promi
  * Lấy danh sách tất cả người dùng đã đăng ký trong hệ thống
  */
 export async function apiGetUsers(currentPort?: number): Promise<AuthUser[]> {
+  // 1. Thử Central Auth Gateway trước
+  try {
+    const centralUrl = getCentralAuthUrl("/api/auth/users");
+    const res = await fetch(centralUrl);
+    const data = await res.json();
+    if (Array.isArray(data)) return data;
+    if (data.users && Array.isArray(data.users)) return data.users;
+  } catch {
+    // Fallback sang Candidate Ports nếu cần
+  }
+
   const portsToTry = currentPort
     ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
     : CANDIDATE_PORTS;

@@ -10,9 +10,10 @@ RUN npm install
 COPY common/ ./common/
 COPY registry/ ./registry/
 COPY peer/ ./peer/
+COPY manager/ ./manager/
 
 # Tạo thư mục downloads, logs
 RUN mkdir -p downloads logs
 
-CMD ["npm", "run", "registry"]
+CMD ["npm", "run", "manager"]
 

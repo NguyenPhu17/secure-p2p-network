@@ -88,13 +88,15 @@ export class UserService {
         return { success: false, error: "Tên đăng nhập đã tồn tại, vui lòng chọn tên khác." };
       }
 
-      // 3. Tự động phân bổ xoay vòng vào 4 Node P2P đang chạy (3001, 3002, 3003, 3004)
-      const AVAILABLE_PORTS = [3001, 3002, 3003, 3004];
+      // 3. Tự động cấp phát cổng độc quyền cho mỗi người dùng (Bắt đầu từ 3001, không trùng lặp)
       let assignedPort = nodePort;
-      if (!assignedPort || !AVAILABLE_PORTS.includes(assignedPort)) {
-        const countRes = await this.pool.query("SELECT COUNT(*) as total FROM users");
-        const total = Number(countRes.rows[0]?.total || 0);
-        assignedPort = AVAILABLE_PORTS[total % AVAILABLE_PORTS.length];
+      if (!assignedPort) {
+        const usedPortsRes = await this.pool.query("SELECT node_port FROM users");
+        const usedPorts = new Set(usedPortsRes.rows.map((r: any) => Number(r.node_port)));
+        assignedPort = 3001;
+        while (usedPorts.has(assignedPort)) {
+          assignedPort++;
+        }
       }
 
       const salt = crypto.randomBytes(16).toString("hex");
