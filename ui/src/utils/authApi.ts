@@ -47,18 +47,33 @@ export function checkPasswordStrength(password: string): PasswordRuleCheck {
 const CANDIDATE_PORTS = [3001, 3002, 3003, 3004, 3005];
 
 /**
+ * Tạo URL gọi API thông minh:
+ * - Hỗ trợ cả Localhost, IP mạng LAN và Domain Reverse Proxy (Port 80 / HTTPS Tunnel)
+ */
+function getEndpointUrl(port: number, path: string): string {
+  if (typeof window === "undefined") {
+    return `http://localhost:${port}${path}`;
+  }
+  const isReverseProxy = window.location.protocol === "https:" || window.location.port === "80" || window.location.port === "";
+  if (isReverseProxy) {
+    return `${window.location.origin}/peer-api/${port}${path}`;
+  }
+  return `http://${window.location.hostname}:${port}${path}`;
+}
+
+/**
  * Gửi yêu cầu đăng nhập
  */
 export async function apiLogin(username: string, password: string, currentPort?: number): Promise<AuthResponse> {
   const portsToTry = currentPort
     ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
     : CANDIDATE_PORTS;
-  const host = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "localhost";
 
   let lastError = "Không thể kết nối tới Backend.";
   for (const port of portsToTry) {
     try {
-      const res = await fetch(`http://${host}:${port}/api/auth/login`, {
+      const url = getEndpointUrl(port, "/api/auth/login");
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password })
@@ -85,12 +100,12 @@ export async function apiRegister(
   const portsToTry = currentPort
     ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
     : CANDIDATE_PORTS;
-  const host = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "localhost";
 
   let lastError = "Không thể kết nối tới Backend.";
   for (const port of portsToTry) {
     try {
-      const res = await fetch(`http://${host}:${port}/api/auth/register`, {
+      const url = getEndpointUrl(port, "/api/auth/register");
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password, displayName, nodePort })
@@ -112,11 +127,11 @@ export async function apiVerifyToken(token: string, currentPort?: number): Promi
   const portsToTry = currentPort
     ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
     : CANDIDATE_PORTS;
-  const host = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "localhost";
 
   for (const port of portsToTry) {
     try {
-      const res = await fetch(`http://${host}:${port}/api/auth/verify`, {
+      const url = getEndpointUrl(port, "/api/auth/verify");
+      const res = await fetch(url, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`

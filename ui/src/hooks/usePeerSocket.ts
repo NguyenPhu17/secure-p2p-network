@@ -82,7 +82,17 @@ export function usePeerSocket(wsPort: number) {
 
   useEffect(() => {
     const wsHost = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "127.0.0.1";
-    const wsUrl = `ws://${wsHost}:${wsPort}`;
+    let wsUrl = `ws://${wsHost}:${wsPort}`;
+
+    // Tự động nhận diện Reverse Proxy (Port 80, 443 hoặc HTTPS Tunnel):
+    if (typeof window !== "undefined") {
+      const isReverseProxy = window.location.protocol === "https:" || window.location.port === "80" || window.location.port === "";
+      if (isReverseProxy) {
+        const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+        wsUrl = `${wsProto}//${window.location.host}/peer-ws/${wsPort}`;
+      }
+    }
+
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
 
