@@ -60,9 +60,8 @@ export class UIBridge {
       const knownPeers: any[] = [];
 
       for (const u of users) {
-        // Bỏ qua tài khoản hiện tại trên chính node này
+        // Bỏ qua chính bản thân mình trong danh sách chat
         if (localUser && u.username === localUser.username) continue;
-        if (!localUser && u.nodePort === this.uiPort) continue;
 
         const peerUserName = u.displayName || u.username;
         const targetNodeName = this.portToNodeMap[u.nodePort];
@@ -72,11 +71,12 @@ export class UIBridge {
             )
           : undefined;
 
-        const isOnline = !!onlineNode;
+        // Nếu peer ở cùng node nội bộ hoặc ở node khác đang online trong mạng P2P
+        const isOnline = u.nodePort === this.uiPort ? true : !!onlineNode;
         const peerInfo = {
           displayName: peerUserName,
-          ip: onlineNode?.ip || "offline",
-          tcpPort: onlineNode?.tcpPort || 0,
+          ip: onlineNode?.ip || (u.nodePort === this.uiPort ? "127.0.0.1" : "offline"),
+          tcpPort: onlineNode?.tcpPort || (u.nodePort === this.uiPort ? this.peerController.tcpPort : 0),
           nodeId: onlineNode?.nodeId || "",
           online: isOnline
         };
@@ -195,7 +195,7 @@ export class UIBridge {
             const body = await this.readJsonBody(req);
             const result = await this.peerController
               .getUserService()
-              .register(body.username, body.password, body.displayName, body.nodePort || this.uiPort);
+              .register(body.username, body.password, body.displayName, body.nodePort);
             res.writeHead(result.success ? 200 : 400, corsHeaders);
             res.end(JSON.stringify(result));
             if (result.success) {
@@ -417,7 +417,7 @@ export class UIBridge {
       case "AUTH_REGISTER": {
         const result = await this.peerController
           .getUserService()
-          .register(cmd.username, cmd.password, cmd.displayName, cmd.nodePort || this.uiPort);
+          .register(cmd.username, cmd.password, cmd.displayName, cmd.nodePort);
         this.sendToClient(ws, { event: "AUTH_RESULT", data: result });
         if (result.success) {
           const mapped = await this.getMappedPeers();
