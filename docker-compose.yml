@@ -23,8 +23,6 @@ services:
     ports:
       - "7000:7000"
       - "4000:4000"
-      - "3001-3010:3001-3010"
-      - "8001-8010:8001-8010"
     environment:
       - MANAGER_PORT=4000
       - REGISTRY_PORT=7000
