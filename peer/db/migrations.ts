@@ -39,6 +39,9 @@ export async function initDatabase(pool: Pool): Promise<void> {
   if (currentVersion < 7) {
     await runMigrationV7(pool);
   }
+  if (currentVersion < 8) {
+    await runMigrationV8(pool);
+  }
 }
 
 async function runMigrationV1(pool: Pool): Promise<void> {
@@ -302,5 +305,24 @@ async function runMigrationV7(pool: Pool): Promise<void> {
   await pool.query(
     "INSERT INTO schema_version (version, applied_at) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     [7, Date.now()]
+  );
+}
+
+async function runMigrationV8(pool: Pool): Promise<void> {
+  // Thêm cột theo dõi trạng thái hiện diện thời gian thực (Liveness / Real-time Presence)
+  await pool.query(`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE users ADD COLUMN last_seen_at BIGINT DEFAULT 0;
+      EXCEPTION WHEN duplicate_column THEN
+        NULL;
+      END;
+    END$$;
+  `);
+
+  await pool.query(
+    "INSERT INTO schema_version (version, applied_at) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    [8, Date.now()]
   );
 }

@@ -56,7 +56,7 @@ export const App: React.FC = () => {
     loadHistory,
     deleteHistory,
     toggleFirewallBlock
-  } = usePeerSocket(wsPort || 3001);
+  } = usePeerSocket(wsPort || 3001, currentUser?.username);
 
   // Kiểm tra tính hợp lệ của JWT Token khi tải ứng dụng
   useEffect(() => {

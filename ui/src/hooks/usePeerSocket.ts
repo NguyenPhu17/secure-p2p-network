@@ -64,7 +64,7 @@ function filterAndMergeLogs(
   );
 }
 
-export function usePeerSocket(wsPort: number) {
+export function usePeerSocket(wsPort: number, currentUsername?: string) {
   const [connected, setConnected] = useState(false);
   const [me, setMe] = useState<string>("");
   const [tcpPort, setTcpPort] = useState<number>(0);
@@ -99,7 +99,17 @@ export function usePeerSocket(wsPort: number) {
     ws.onopen = () => {
       setConnected(true);
       setErrorAlert(null);
+      if (currentUsername) {
+        ws.send(JSON.stringify({ action: "USER_HEARTBEAT", username: currentUsername }));
+      }
     };
+
+    // Gửi Heartbeat định kỳ mỗi 3 giây để duy trì trạng thái Online thời gian thực
+    const heartbeatTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN && currentUsername) {
+        ws.send(JSON.stringify({ action: "USER_HEARTBEAT", username: currentUsername }));
+      }
+    }, 3000);
 
     ws.onmessage = (event) => {
       try {
@@ -271,9 +281,15 @@ export function usePeerSocket(wsPort: number) {
     };
 
     return () => {
+      clearInterval(heartbeatTimer);
+      if (currentUsername && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ action: "USER_LOGOUT", username: currentUsername }));
+        } catch {}
+      }
       ws.close();
     };
-  }, [wsPort]);
+  }, [wsPort, currentUsername]);
 
   // Commands
   const sendChat = useCallback((receiver: string, body: string) => {

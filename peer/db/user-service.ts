@@ -13,6 +13,7 @@ export interface UserRecord {
   displayName: string;
   nodePort: number;
   createdAt: number;
+  lastSeenAt?: number;
 }
 
 export interface AuthResult {
@@ -102,9 +103,9 @@ export class UserService {
       const now = Date.now();
 
       await this.pool.query(
-        `INSERT INTO users (id, username, password_hash, password_salt, display_name, node_port, created_at, failed_attempts, last_failed_at, locked_until)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0)`,
-        [userId, cleanUsername, passwordHash, salt, cleanDisplay, assignedPort, now]
+        `INSERT INTO users (id, username, password_hash, password_salt, display_name, node_port, created_at, failed_attempts, last_failed_at, locked_until, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0, $8)`,
+        [userId, cleanUsername, passwordHash, salt, cleanDisplay, assignedPort, now, now]
       );
 
       const userRecord: UserRecord = {
@@ -112,7 +113,8 @@ export class UserService {
         username: cleanUsername,
         displayName: cleanDisplay,
         nodePort: assignedPort,
-        createdAt: now
+        createdAt: now,
+        lastSeenAt: now
       };
 
       // 4. Cấp JWT Token có chữ ký số (Thời hạn 30 phút = 1800 giây)
@@ -215,13 +217,11 @@ export class UserService {
         }
       }
 
-      // 3. ĐĂNG NHẬP THÀNH CÔNG: Reset bộ đếm số lần sai
-      if (row.failed_attempts > 0 || row.locked_until > 0) {
-        await this.pool.query(
-          "UPDATE users SET failed_attempts = 0, last_failed_at = 0, locked_until = 0 WHERE id = $4",
-          [0, 0, 0, row.id]
-        );
-      }
+      // 3. ĐĂNG NHẬP THÀNH CÔNG: Reset bộ đếm số lần sai và cập nhật last_seen_at
+      await this.pool.query(
+        "UPDATE users SET failed_attempts = 0, last_failed_at = 0, locked_until = 0, last_seen_at = $1 WHERE id = $2",
+        [now, row.id]
+      );
 
       const userRecord: UserRecord = {
         id: row.id,
@@ -273,19 +273,42 @@ export class UserService {
   }
 
   /**
+   * Cập nhật trạng thái hiện diện (Heartbeat / Last Seen) của người dùng
+   */
+  public async touchUserPresence(username: string): Promise<void> {
+    const cleanUsername = (username || "").trim().toLowerCase();
+    if (!cleanUsername) return;
+    try {
+      await this.pool.query("UPDATE users SET last_seen_at = $1 WHERE username = $2", [Date.now(), cleanUsername]);
+    } catch {}
+  }
+
+  /**
+   * Đặt trạng thái người dùng là Offline ngay lập tức khi tắt tab hoặc ngắt kết nối
+   */
+  public async setUserOffline(username: string): Promise<void> {
+    const cleanUsername = (username || "").trim().toLowerCase();
+    if (!cleanUsername) return;
+    try {
+      await this.pool.query("UPDATE users SET last_seen_at = 0 WHERE username = $1", [cleanUsername]);
+    } catch {}
+  }
+
+  /**
    * Lấy danh sách tài khoản hiện có
    */
   public async listUsers(): Promise<UserRecord[]> {
     try {
       const res = await this.pool.query(
-        "SELECT id, username, display_name, node_port, created_at FROM users ORDER BY created_at ASC"
+        "SELECT id, username, display_name, node_port, created_at, COALESCE(last_seen_at, 0) as last_seen_at FROM users ORDER BY created_at ASC"
       );
       return res.rows.map((r) => ({
         id: r.id,
         username: r.username,
         displayName: r.display_name,
         nodePort: r.node_port,
-        createdAt: Number(r.created_at)
+        createdAt: Number(r.created_at),
+        lastSeenAt: Number(r.last_seen_at)
       }));
     } catch (err) {
       return [];

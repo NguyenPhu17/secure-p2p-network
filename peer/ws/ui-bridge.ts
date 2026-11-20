@@ -49,6 +49,7 @@ export class UIBridge {
     try {
       const users = await this.peerController.getUserService().listUsers();
       const onlineNodes = this.peerController.getOnlinePeers();
+      const now = Date.now();
 
       // Xác định tên hiển thị của tài khoản gán cho node hiện tại
       const localUser = users.find((u) => u.nodePort === this.uiPort);
@@ -71,14 +72,19 @@ export class UIBridge {
             )
           : undefined;
 
-        // Nếu peer ở cùng node nội bộ hoặc ở node khác đang online trong mạng P2P
-        const isOnline = u.nodePort === this.uiPort ? true : !!onlineNode;
+        // Tiêu chuẩn Online thời gian thực:
+        // Người dùng được tính là Online nếu có heartbeat trong vòng 10 giây gần nhất (now - lastSeenAt <= 10000)
+        // và node P2P đang hoạt động.
+        const isRecent = (now - (u.lastSeenAt || 0)) <= 10000;
+        const isOnline = isRecent && (u.nodePort === this.uiPort || !!onlineNode);
+
         const peerInfo = {
           displayName: peerUserName,
           ip: onlineNode?.ip || (u.nodePort === this.uiPort ? "127.0.0.1" : "offline"),
           tcpPort: onlineNode?.tcpPort || (u.nodePort === this.uiPort ? this.peerController.tcpPort : 0),
           nodeId: onlineNode?.nodeId || "",
-          online: isOnline
+          online: isOnline,
+          lastSeen: u.lastSeenAt || 0
         };
 
         knownPeers.push(peerInfo);
@@ -315,9 +321,16 @@ export class UIBridge {
           }
         });
 
-        ws.on("close", () => {
+        ws.on("close", async () => {
           this.clients.delete(ws);
           this.logger.info("NETWORK", "React UI đã ngắt kết nối WebSocket.");
+          const uname = (ws as any).attachedUsername;
+          if (uname) {
+            await this.peerController.getUserService().setUserOffline(uname);
+            const mapped = await this.getMappedPeers();
+            this.broadcast({ event: "PEER_LIST_UPDATE", data: mapped.peers });
+            this.broadcast({ event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+          }
         });
 
         ws.on("error", (err) => {
@@ -389,6 +402,24 @@ export class UIBridge {
 
   private async handleUICommand(ws: WebSocket, cmd: any): Promise<void> {
     switch (cmd.action) {
+      case "USER_HEARTBEAT": {
+        if (cmd.username) {
+          (ws as any).attachedUsername = cmd.username;
+          await this.peerController.getUserService().touchUserPresence(cmd.username);
+        }
+        break;
+      }
+
+      case "USER_LOGOUT": {
+        if (cmd.username) {
+          await this.peerController.getUserService().setUserOffline(cmd.username);
+          const mapped = await this.getMappedPeers();
+          this.broadcast({ event: "PEER_LIST_UPDATE", data: mapped.peers });
+          this.broadcast({ event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+        }
+        break;
+      }
+
       case "GET_INITIAL_STATE": {
         const mapped = await this.getMappedPeers();
         this.sendToClient(ws, {
