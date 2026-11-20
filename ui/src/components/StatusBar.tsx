@@ -20,11 +20,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
     <footer className="h-[32px] min-h-[32px] border-t border-[#E2E8F0] bg-[#F8FAFC] text-[#64748B] text-[12px] font-mono select-none z-20 flex items-stretch justify-between px-3.5">
       {/* Left items separated by 1px solid #E2E8F0 vertical dividers */}
       <div className="flex items-stretch divide-x divide-[#E2E8F0] -ml-3.5">
-        {/* TCP Port */}
+        {/* P2P Network Status */}
         <div className="flex items-center space-x-2 px-3.5 hover:bg-[#F1F5F9] transition-colors">
           <Server className="w-3.5 h-3.5 text-[#64748B]" />
           <span>
-            TCP LISTEN: <strong className="text-[#0F172A] font-medium">:{tcpPort || "---"}</strong>
+            P2P NETWORK: <strong className="text-[#10B981] font-medium">READY</strong>
           </span>
         </div>
 

@@ -38,9 +38,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {me || "Local Node"}
             </div>
             <div className="text-[12px] font-mono text-[#64748B] flex items-center gap-1.5 mt-0.5">
-              <span>:{tcpPort || "---"}</span>
+              <span className="text-[#10B981] font-medium text-[11px]">● ONLINE</span>
               <span className="text-[#CBD5E1]">|</span>
-              <span className="text-[#10B981] font-medium text-[11px]">LISTENING</span>
+              <span>P2P NODE</span>
             </div>
           </div>
         </div>
@@ -138,15 +138,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )}
                     </div>
                     <div className="text-[12.5px] text-[#64748B] font-mono mt-0.5 font-normal flex items-center gap-1.5 truncate">
-                      <span>{peer.tcpPort > 0 ? `${peer.ip}:${peer.tcpPort}` : "Offline • DHT Mailbox"}</span>
-                      {peer.nodeId && (
-                        <span
-                          className="text-[11px] bg-[#F1F5F9] text-[#64748B] px-1.5 py-0.2 rounded-[3px] border border-[#E2E8F0]"
-                          title={`DHT Node ID: ${peer.nodeId}`}
-                        >
-                          #{peer.nodeId.substring(0, 4)}
-                        </span>
-                      )}
+                      <span className={isOnline ? "text-[#10B981]" : "text-[#94A3B8]"}>
+                        {isOnline ? "P2P Direct • Online" : "DHT Mailbox • Offline"}
+                      </span>
                     </div>
                   </div>
                 </div>

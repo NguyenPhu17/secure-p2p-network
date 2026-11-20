@@ -1,6 +1,7 @@
 /**
  * UIBridge - WebSocket & HTTP Server làm cầu nối giữa Peer Backend và React UI
  * Lắng nghe kết nối WebSocket và HTTP REST API xác thực trên localhost.
+ * Tự động ánh xạ danh tính người dùng thực với node container P2P.
  */
 
 import http from "node:http";
@@ -14,12 +15,144 @@ export class UIBridge {
   private wss: WebSocketServer | null = null;
   private clients: Set<WebSocket> = new Set();
   private metrics = MetricsCollector.getInstance();
+  private syncTimer: NodeJS.Timeout | null = null;
+
+  // Bản đồ ánh xạ mặc định giữa UI Port và Tên Node Container P2P
+  private portToNodeMap: Record<number, string> = {
+    3001: "Alice",
+    3002: "Bob",
+    3003: "Charlie",
+    3004: "David"
+  };
+
+  private nodeToPortMap: Record<string, number> = {
+    "Alice": 3001,
+    "Bob": 3002,
+    "Charlie": 3003,
+    "David": 3004
+  };
 
   constructor(
     private peerController: PeerController,
     private uiPort: number,
     private logger: Logger
-  ) {}
+  ) {
+    this.portToNodeMap[this.uiPort] = this.peerController.displayName;
+    this.nodeToPortMap[this.peerController.displayName] = this.uiPort;
+  }
+
+  /**
+   * Ánh xạ danh sách người dùng đã đăng ký thành danh sách Peer hiển thị trên UI.
+   * Chỉ hiển thị các tài khoản người dùng thực tế, không hiển thị tên node ảo (Charlie, Bob...)
+   */
+  private async getMappedPeers(): Promise<{ me: string; peers: any[]; knownPeers: any[] }> {
+    try {
+      const users = await this.peerController.getUserService().listUsers();
+      const onlineNodes = this.peerController.getOnlinePeers();
+
+      // Xác định tên hiển thị của tài khoản gán cho node hiện tại
+      const localUser = users.find((u) => u.nodePort === this.uiPort);
+      const meName = localUser
+        ? (localUser.displayName || localUser.username)
+        : this.peerController.displayName;
+
+      const peers: any[] = [];
+      const knownPeers: any[] = [];
+
+      for (const u of users) {
+        // Bỏ qua tài khoản hiện tại trên chính node này
+        if (localUser && u.username === localUser.username) continue;
+        if (!localUser && u.nodePort === this.uiPort) continue;
+
+        const peerUserName = u.displayName || u.username;
+        const targetNodeName = this.portToNodeMap[u.nodePort];
+        const onlineNode = targetNodeName
+          ? onlineNodes.find(
+              (n) => n.displayName.toLowerCase() === targetNodeName.toLowerCase()
+            )
+          : undefined;
+
+        const isOnline = !!onlineNode;
+        const peerInfo = {
+          displayName: peerUserName,
+          ip: onlineNode?.ip || "offline",
+          tcpPort: onlineNode?.tcpPort || 0,
+          nodeId: onlineNode?.nodeId || "",
+          online: isOnline
+        };
+
+        knownPeers.push(peerInfo);
+        if (isOnline) {
+          peers.push(peerInfo);
+        }
+      }
+
+      return { me: meName, peers, knownPeers };
+    } catch (err: any) {
+      this.logger.warn("SYSTEM", `Lỗi getMappedPeers: ${err.message}`);
+      return {
+        me: this.peerController.displayName,
+        peers: this.peerController.getOnlinePeers(),
+        knownPeers: await this.peerController.getKnownPeersForUI()
+      };
+    }
+  }
+
+  /**
+   * Chuyển đổi tên người dùng (UI) thành tên node P2P container (Backend)
+   */
+  private async resolveNodeName(name: string): Promise<string> {
+    if (!name) return name;
+    try {
+      const users = await this.peerController.getUserService().listUsers();
+      const user = users.find(
+        (u) =>
+          u.username.toLowerCase() === name.toLowerCase() ||
+          u.displayName.toLowerCase() === name.toLowerCase()
+      );
+      if (user && this.portToNodeMap[user.nodePort]) {
+        return this.portToNodeMap[user.nodePort];
+      }
+    } catch {}
+    return name;
+  }
+
+  /**
+   * Chuyển đổi tên node P2P container trong tin nhắn thành tên người dùng thực tế
+   */
+  private async translateMessage(msg: any): Promise<any> {
+    if (!msg) return msg;
+    try {
+      const users = await this.peerController.getUserService().listUsers();
+      const copy = { ...msg };
+
+      // Dịch sender nếu là node name (Alice, Bob, Charlie, David)
+      const senderPort = this.nodeToPortMap[copy.sender];
+      if (senderPort) {
+        const senderUser = users.find((u) => u.nodePort === senderPort);
+        if (senderUser) {
+          copy.sender = senderUser.displayName || senderUser.username;
+        }
+      }
+
+      // Dịch receiver nếu là node name
+      const receiverPort = this.nodeToPortMap[copy.receiver];
+      if (receiverPort) {
+        const receiverUser = users.find((u) => u.nodePort === receiverPort);
+        if (receiverUser) {
+          copy.receiver = receiverUser.displayName || receiverUser.username;
+        }
+      }
+
+      // Cập nhật conversation_id theo tên người dùng
+      const partner = copy.direction === "out" ? copy.receiver : copy.sender;
+      copy.conversation_id = `conv_${partner}`;
+
+      return copy;
+    } catch {
+      return msg;
+    }
+  }
 
   public start(): Promise<void> {
     return new Promise((resolve) => {
@@ -63,6 +196,11 @@ export class UIBridge {
               .register(body.username, body.password, body.displayName, body.nodePort || this.uiPort);
             res.writeHead(result.success ? 200 : 400, corsHeaders);
             res.end(JSON.stringify(result));
+            if (result.success) {
+              const mapped = await this.getMappedPeers();
+              this.broadcast({ event: "PEER_LIST_UPDATE", data: mapped.peers });
+              this.broadcast({ event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+            }
           } catch (e: any) {
             res.writeHead(500, corsHeaders);
             res.end(JSON.stringify({ success: false, error: e.message }));
@@ -149,17 +287,17 @@ export class UIBridge {
         this.clients.add(ws);
         this.logger.info("NETWORK", "React UI đã kết nối tới WebSocket Bridge.");
 
-        // Gửi trạng thái ban đầu ngay khi UI vừa kết nối
-        const knownPeers = await this.peerController.getKnownPeersForUI();
+        // Gửi trạng thái ban đầu đã ánh xạ theo tài khoản người dùng thực
+        const mapped = await this.getMappedPeers();
         this.sendToClient(ws, {
           event: "INITIAL_STATE",
           data: {
-            me: this.peerController.displayName,
+            me: mapped.me,
             nodeId: this.peerController.getNodeId(),
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
-            peers: this.peerController.getOnlinePeers(),
-            knownPeers,
+            peers: mapped.peers,
+            knownPeers: mapped.knownPeers,
             blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
@@ -186,9 +324,42 @@ export class UIBridge {
       });
 
       // Lắng nghe sự kiện từ PeerController để phát lên UI
-      this.peerController.onUIEvent((event, data) => {
+      this.peerController.onUIEvent(async (event, data) => {
+        if (event === "PEER_LIST_UPDATE" || event === "KNOWN_PEERS_UPDATE") {
+          const mapped = await this.getMappedPeers();
+          this.broadcast({ event: "PEER_LIST_UPDATE", data: mapped.peers });
+          this.broadcast({ event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+          return;
+        }
+
+        if (event === "NEW_MESSAGE") {
+          const translated = await this.translateMessage(data);
+          this.broadcast({ event: "NEW_MESSAGE", data: translated });
+          return;
+        }
+
+        if (event === "FIREWALL_STATUS_UPDATE") {
+          const users = await this.peerController.getUserService().listUsers();
+          const port = this.nodeToPortMap[data.peer];
+          const u = port ? users.find((x) => x.nodePort === port) : null;
+          const peerName = u ? (u.displayName || u.username) : data.peer;
+          this.broadcast({ event: "FIREWALL_STATUS_UPDATE", data: { ...data, peer: peerName } });
+          return;
+        }
+
         this.broadcast({ event, data });
       });
+
+      // Định kỳ đồng bộ danh sách peer người dùng mỗi 2.5 giây cho tất cả client
+      this.syncTimer = setInterval(async () => {
+        if (this.clients.size > 0) {
+          try {
+            const mapped = await this.getMappedPeers();
+            this.broadcast({ event: "PEER_LIST_UPDATE", data: mapped.peers });
+            this.broadcast({ event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+          } catch {}
+        }
+      }, 2500);
 
       // Lắng nghe log thời gian thực để phát lên Panel Protocol Logs của UI
       this.logger.onLog((entry: LogEntry) => {
@@ -217,16 +388,16 @@ export class UIBridge {
   private async handleUICommand(ws: WebSocket, cmd: any): Promise<void> {
     switch (cmd.action) {
       case "GET_INITIAL_STATE": {
-        const knownPeers = await this.peerController.getKnownPeersForUI();
+        const mapped = await this.getMappedPeers();
         this.sendToClient(ws, {
           event: "INITIAL_STATE",
           data: {
-            me: this.peerController.displayName,
+            me: mapped.me,
             nodeId: this.peerController.getNodeId(),
             tcpPort: this.peerController.tcpPort,
             discoveryMode: this.peerController.discoveryMode,
-            peers: this.peerController.getOnlinePeers(),
-            knownPeers,
+            peers: mapped.peers,
+            knownPeers: mapped.knownPeers,
             blockedPeers: this.peerController.getBlockedPeers(),
             channelStatus: "Plaintext (Chưa mã hóa - DHT Pure P2P)",
             logs: this.logger.getRecentLogs()
@@ -246,6 +417,11 @@ export class UIBridge {
           .getUserService()
           .register(cmd.username, cmd.password, cmd.displayName, cmd.nodePort || this.uiPort);
         this.sendToClient(ws, { event: "AUTH_RESULT", data: result });
+        if (result.success) {
+          const mapped = await this.getMappedPeers();
+          this.broadcast({ event: "PEER_LIST_UPDATE", data: mapped.peers });
+          this.broadcast({ event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+        }
         break;
       }
 
@@ -257,27 +433,33 @@ export class UIBridge {
 
       case "SEND_CHAT": {
         if (!cmd.receiver || !cmd.body) return;
-        await this.peerController.sendChatMessage(cmd.receiver, cmd.body);
+        const targetNode = await this.resolveNodeName(cmd.receiver);
+        await this.peerController.sendChatMessage(targetNode, cmd.body);
         break;
       }
 
       case "SEND_FILE": {
         if (!cmd.receiver || !cmd.filePath) return;
-        await this.peerController.sendFile(cmd.receiver, cmd.filePath);
+        const targetNode = await this.resolveNodeName(cmd.receiver);
+        await this.peerController.sendFile(targetNode, cmd.filePath);
         break;
       }
 
       case "GET_CHAT_HISTORY": {
         if (!cmd.peer) return;
+        const targetNode = await this.resolveNodeName(cmd.peer);
         const limit = cmd.limit || 50;
         const before = cmd.beforeLamportClock !== undefined ? cmd.beforeLamportClock : cmd.beforeTimestamp;
-        const messages = await this.peerController.getChatHistory(cmd.peer, limit, before);
+        const rawMessages = await this.peerController.getChatHistory(targetNode, limit, before);
+        const translatedMessages = await Promise.all(
+          rawMessages.map((m) => this.translateMessage(m))
+        );
         this.sendToClient(ws, {
           event: "CHAT_HISTORY",
           data: {
             peer: cmd.peer,
-            messages,
-            hasMore: messages.length >= limit
+            messages: translatedMessages,
+            hasMore: rawMessages.length >= limit
           }
         });
         break;
@@ -285,13 +467,19 @@ export class UIBridge {
 
       case "DELETE_CHAT_HISTORY": {
         if (!cmd.peer) return;
-        await this.peerController.deleteChatHistory(cmd.peer);
+        const targetNode = await this.resolveNodeName(cmd.peer);
+        await this.peerController.deleteChatHistory(targetNode);
+        this.sendToClient(ws, {
+          event: "CHAT_HISTORY_CLEARED",
+          data: { peer: cmd.peer }
+        });
         break;
       }
 
       case "SIMULATE_BLOCK": {
         if (!cmd.peer) return;
-        this.peerController.simulateFirewallBlock(cmd.peer, cmd.blocked !== false);
+        const targetNode = await this.resolveNodeName(cmd.peer);
+        this.peerController.simulateFirewallBlock(targetNode, cmd.blocked !== false);
         break;
       }
 
@@ -317,6 +505,11 @@ export class UIBridge {
   }
 
   public async close(): Promise<void> {
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+      this.syncTimer = null;
+    }
+
     for (const client of this.clients) {
       try {
         client.close();

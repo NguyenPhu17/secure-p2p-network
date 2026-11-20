@@ -145,3 +145,25 @@ export async function apiVerifyToken(token: string, currentPort?: number): Promi
   }
   return { valid: false, error: "Không thể kết nối để kiểm tra token" };
 }
+
+/**
+ * Lấy danh sách tất cả người dùng đã đăng ký trong hệ thống
+ */
+export async function apiGetUsers(currentPort?: number): Promise<AuthUser[]> {
+  const portsToTry = currentPort
+    ? [currentPort, ...CANDIDATE_PORTS.filter((p) => p !== currentPort)]
+    : CANDIDATE_PORTS;
+
+  for (const port of portsToTry) {
+    try {
+      const url = getEndpointUrl(port, "/api/auth/users");
+      const res = await fetch(url);
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+      if (data.users && Array.isArray(data.users)) return data.users;
+    } catch {
+      // Thử cổng tiếp theo
+    }
+  }
+  return [];
+}

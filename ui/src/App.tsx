@@ -12,10 +12,10 @@ export const App: React.FC = () => {
   const searchParams = new URLSearchParams(window.location.search);
   const paramPort = searchParams.get("port") ? parseInt(searchParams.get("port")!, 10) : null;
 
-  // Khôi phục user từ localStorage nếu có
+  // Khôi phục user từ sessionStorage (hoặc localStorage) nếu có
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
     try {
-      const saved = localStorage.getItem("p2p_current_user");
+      const saved = sessionStorage.getItem("p2p_current_user") || localStorage.getItem("p2p_current_user");
       return saved ? JSON.parse(saved) : null;
     } catch {
       return null;
@@ -25,7 +25,7 @@ export const App: React.FC = () => {
   const [wsPort, setWsPort] = useState<number | null>(() => {
     if (paramPort) return paramPort;
     try {
-      const saved = localStorage.getItem("p2p_current_user");
+      const saved = sessionStorage.getItem("p2p_current_user") || localStorage.getItem("p2p_current_user");
       if (saved) {
         const u: AuthUser = JSON.parse(saved);
         return u.nodePort;
@@ -58,9 +58,9 @@ export const App: React.FC = () => {
     toggleFirewallBlock
   } = usePeerSocket(wsPort || 3001);
 
-  // Kiểm tra tính hợp lệ của JWT Token khi tải ứng dụng (Chống giả mạo localStorage)
+  // Kiểm tra tính hợp lệ của JWT Token khi tải ứng dụng
   useEffect(() => {
-    const token = localStorage.getItem("p2p_auth_token");
+    const token = sessionStorage.getItem("p2p_auth_token") || localStorage.getItem("p2p_auth_token");
     if (token && currentUser) {
       apiVerifyToken(token, wsPort || 3001).then((res) => {
         if (!res.valid) {
@@ -80,15 +80,18 @@ export const App: React.FC = () => {
   const handleLoginSuccess = (user: AuthUser, token?: string) => {
     setCurrentUser(user);
     setWsPort(user.nodePort);
-    localStorage.setItem("p2p_current_user", JSON.stringify(user));
+    // Dùng sessionStorage để mở nhiều tab/cửa sổ cùng lúc không bị đè tài khoản
+    sessionStorage.setItem("p2p_current_user", JSON.stringify(user));
     if (token) {
-      localStorage.setItem("p2p_auth_token", token);
+      sessionStorage.setItem("p2p_auth_token", token);
     }
     // Giữ sạch đường dẫn URL, không đính kèm ?port=
     window.history.replaceState({}, "", window.location.pathname);
   };
 
   const handleLogout = () => {
+    sessionStorage.removeItem("p2p_current_user");
+    sessionStorage.removeItem("p2p_auth_token");
     localStorage.removeItem("p2p_current_user");
     localStorage.removeItem("p2p_auth_token");
     setCurrentUser(null);
