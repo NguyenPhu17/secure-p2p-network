@@ -171,10 +171,12 @@ export class UIBridge {
           return;
         }
 
-        const url = req.url || "";
+        const rawUrl = req.url || "";
+        const cleanPath = rawUrl.split("?")[0].replace(/\/+$/, "") || "/";
+        this.logger.info("NETWORK", `[HTTP API] ${req.method} ${cleanPath}`);
 
         // API Đăng nhập: POST /api/auth/login
-        if (url === "/api/auth/login" && req.method === "POST") {
+        if (cleanPath === "/api/auth/login" && req.method === "POST") {
           try {
             const body = await this.readJsonBody(req);
             const result = await this.peerController.getUserService().login(body.username, body.password);
@@ -188,7 +190,7 @@ export class UIBridge {
         }
 
         // API Đăng ký: POST /api/auth/register
-        if (url === "/api/auth/register" && req.method === "POST") {
+        if (cleanPath === "/api/auth/register" && req.method === "POST") {
           try {
             const body = await this.readJsonBody(req);
             const result = await this.peerController
@@ -209,7 +211,7 @@ export class UIBridge {
         }
 
         // API Danh sách tài khoản: GET /api/auth/users
-        if (url === "/api/auth/users" && req.method === "GET") {
+        if (cleanPath === "/api/auth/users" && req.method === "GET") {
           try {
             const users = await this.peerController.getUserService().listUsers();
             res.writeHead(200, corsHeaders);
@@ -222,14 +224,14 @@ export class UIBridge {
         }
 
         // API Xác thực Token: GET /api/auth/verify
-        if (url.startsWith("/api/auth/verify") && req.method === "GET") {
+        if (cleanPath === "/api/auth/verify" && req.method === "GET") {
           try {
             const authHeader = req.headers["authorization"] || "";
             let token = "";
             if (authHeader.startsWith("Bearer ")) {
               token = authHeader.slice(7).trim();
             } else {
-              const parsedUrl = new URL(url, `http://${req.headers.host || "localhost"}`);
+              const parsedUrl = new URL(rawUrl, `http://${req.headers.host || "localhost"}`);
               token = parsedUrl.searchParams.get("token") || "";
             }
             const result = this.peerController.getUserService().verifyToken(token);
@@ -243,7 +245,7 @@ export class UIBridge {
         }
 
         // Endpoint xuất dữ liệu giám sát cho Prometheus: GET /metrics
-        if (url === "/metrics" && req.method === "GET") {
+        if (cleanPath === "/metrics" && req.method === "GET") {
           try {
             this.metrics.activePeersGauge.set(
               { node: this.peerController.displayName },
@@ -265,21 +267,21 @@ export class UIBridge {
         }
 
         // Endpoint mặc định kiểm tra tình trạng sức khỏe
-        if (url === "/api/health") {
+        if (cleanPath === "/api/health") {
           res.writeHead(200, corsHeaders);
           res.end(JSON.stringify({ status: "ok", node: this.peerController.displayName, port: this.uiPort }));
           return;
         }
 
         res.writeHead(404, corsHeaders);
-        res.end(JSON.stringify({ error: "Not Found" }));
+        res.end(JSON.stringify({ error: "Not Found", path: rawUrl }));
       });
 
       // 2. Tích hợp WebSocket Server vào HTTP Server
       this.wss = new WebSocketServer({ server: this.httpServer });
 
-      this.httpServer.listen(this.uiPort, () => {
-        this.logger.info("SYSTEM", `UIBridge Server (HTTP + WS) đang chạy tại port ${this.uiPort}`);
+      this.httpServer.listen(this.uiPort, "0.0.0.0", () => {
+        this.logger.info("SYSTEM", `UIBridge Server (HTTP + WS) đang chạy tại port ${this.uiPort} (0.0.0.0)`);
         resolve();
       });
 
