@@ -55,14 +55,17 @@ export class UIBridge {
    * Ánh xạ danh sách người dùng đã đăng ký thành danh sách Peer hiển thị trên UI.
    * Chỉ hiển thị các tài khoản người dùng thực tế, không hiển thị tên node ảo (Charlie, Bob...)
    */
-  private async getMappedPeers(): Promise<{ me: string; peers: any[]; knownPeers: any[] }> {
+  private async getMappedPeers(forUsername?: string): Promise<{ me: string; peers: any[]; knownPeers: any[] }> {
     try {
       const users = await this.peerController.getUserService().listUsers();
       const onlineNodes = this.peerController.getOnlinePeers();
       const now = Date.now();
 
-      // Xác định tên hiển thị của tài khoản gán cho node hiện tại
-      const localUser = users.find((u) => u.nodePort === this.uiPort);
+      // Xác định tên hiển thị của tài khoản gán cho node hiện tại hoặc client hiện tại
+      const localUser = forUsername
+        ? users.find((u) => u.username.toLowerCase() === forUsername.toLowerCase())
+        : (this.activeUsername ? users.find((u) => u.username.toLowerCase() === this.activeUsername!.toLowerCase()) : users.find((u) => u.nodePort === this.uiPort));
+
       if (localUser) {
         this.activeUsername = localUser.username;
       }
@@ -75,7 +78,8 @@ export class UIBridge {
 
       for (const u of users) {
         // Bỏ qua chính bản thân mình trong danh sách chat
-        if (localUser && u.username === localUser.username) continue;
+        if (localUser && u.username.toLowerCase() === localUser.username.toLowerCase()) continue;
+        if (forUsername && u.username.toLowerCase() === forUsername.toLowerCase()) continue;
 
         const peerUserName = u.displayName || u.username;
         const targetNodeName = this.portToNodeMap[u.nodePort] || `Node-${u.nodePort - 3000}`;
@@ -384,9 +388,12 @@ export class UIBridge {
       this.syncTimer = setInterval(async () => {
         if (this.clients.size > 0) {
           try {
-            const mapped = await this.getMappedPeers();
-            this.broadcast({ event: "PEER_LIST_UPDATE", data: mapped.peers });
-            this.broadcast({ event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+            for (const client of this.clients) {
+              const currentUser = (client as any).attachedUsername || this.activeUsername;
+              const mapped = await this.getMappedPeers(currentUser);
+              this.sendToClient(client, { event: "PEER_LIST_UPDATE", data: mapped.peers });
+              this.sendToClient(client, { event: "KNOWN_PEERS_UPDATE", data: mapped.knownPeers });
+            }
           } catch {}
         }
       }, 2500);
@@ -436,7 +443,8 @@ export class UIBridge {
       }
 
       case "GET_INITIAL_STATE": {
-        const mapped = await this.getMappedPeers();
+        const currentUser = (ws as any).attachedUsername || this.activeUsername;
+        const mapped = await this.getMappedPeers(currentUser);
         this.sendToClient(ws, {
           event: "INITIAL_STATE",
           data: {
