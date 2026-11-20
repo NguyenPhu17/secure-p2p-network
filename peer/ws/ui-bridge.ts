@@ -17,28 +17,10 @@ export class UIBridge {
   private metrics = MetricsCollector.getInstance();
   private syncTimer: NodeJS.Timeout | null = null;
 
-  // Bản đồ ánh xạ mặc định giữa UI Port và Tên Node Container P2P
-  private portToNodeMap: Record<number, string> = {
-    3001: "Node-1",
-    3002: "Node-2",
-    3003: "Node-3",
-    3004: "Node-4"
-  };
+  // Bản đồ ánh xạ giữa UI Port và Username (được cập nhật động khi user đăng nhập)
+  private portToNodeMap: Record<number, string> = {}; // Không dùng "Node-X" tĩnh nữa
 
-  private nodeToPortMap: Record<string, number> = {
-    "Node-1": 3001,
-    "Node-2": 3002,
-    "Node-3": 3003,
-    "Node-4": 3004,
-    "peer-1": 3001,
-    "peer-2": 3002,
-    "peer-3": 3003,
-    "peer-4": 3004,
-    "node-1": 3001,
-    "node-2": 3002,
-    "node-3": 3003,
-    "node-4": 3004
-  };
+  private nodeToPortMap: Record<string, number> = {}; // Cập nhật động theo username
 
   private activeUsername: string | null = null;
 
@@ -82,11 +64,12 @@ export class UIBridge {
         if (forUsername && u.username.toLowerCase() === forUsername.toLowerCase()) continue;
 
         const peerUserName = u.displayName || u.username;
-        const targetNodeName = this.portToNodeMap[u.nodePort] || `Node-${u.nodePort - 3000}`;
+        // Tìm peer online theo username (khớp với PEER_NAME của peer process) hoặc tcpPort
         const targetTcpPort = u.nodePort ? u.nodePort + 5000 : 0;
         const onlineNode = onlineNodes.find(
-          (n) => (n.displayName && n.displayName.toLowerCase() === targetNodeName.toLowerCase()) ||
-                 (targetTcpPort && n.tcpPort === targetTcpPort)
+          (n) =>
+            (n.displayName && n.displayName.toLowerCase() === u.username.toLowerCase()) ||
+            (targetTcpPort && n.tcpPort === targetTcpPort)
         );
 
         // Tiêu chuẩn Online thời gian thực:
@@ -121,7 +104,8 @@ export class UIBridge {
   }
 
   /**
-   * Chuyển đổi tên người dùng (UI) thành tên node P2P container (Backend)
+   * Chuyển đổi tên người dùng (UI displayName) thành username thực tế dùng để routing DHT
+   * Vì peer processes chạy với PEER_NAME = username, nên luôn dùng username để resolve
    */
   private async resolveNodeName(name: string): Promise<string> {
     if (!name) return name;
@@ -130,10 +114,10 @@ export class UIBridge {
       const user = users.find(
         (u) =>
           u.username.toLowerCase() === name.toLowerCase() ||
-          u.displayName.toLowerCase() === name.toLowerCase()
+          (u.displayName && u.displayName.toLowerCase() === name.toLowerCase())
       );
-      if (user && this.portToNodeMap[user.nodePort]) {
-        return this.portToNodeMap[user.nodePort];
+      if (user) {
+        return user.username; // Luôn dùng username (lowercase) để khớp với PEER_NAME của peer process
       }
     } catch {}
     return name;
