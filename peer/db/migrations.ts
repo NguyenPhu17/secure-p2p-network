@@ -254,12 +254,8 @@ async function runMigrationV6(pool: Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
   `);
 
-  // Tạo tài khoản mặc định (Alice, Bob, Charlie) nếu chưa có (Mật khẩu mặc định: 123456)
-  const defaultAccounts = [
-    { username: "alice", displayName: "Alice", port: 3001 },
-    { username: "bob", displayName: "Bob", port: 3002 },
-    { username: "charlie", displayName: "Charlie", port: 3003 }
-  ];
+  // Không tự động tạo tài khoản mặc định, để hệ thống phân bổ người dùng đăng ký mới
+  const defaultAccounts: Array<{ username: string; displayName: string; port: number }> = [];
 
   const crypto = await import("node:crypto");
   for (const acc of defaultAccounts) {

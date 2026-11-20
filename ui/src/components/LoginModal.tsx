@@ -9,11 +9,12 @@ import {
   AlertCircle,
   Server,
   Layers,
-  Sparkles,
   ShieldAlert,
   CheckCircle2,
   XCircle,
-  KeyRound
+  KeyRound,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import { apiLogin, apiRegister, AuthUser, checkPasswordStrength } from "../utils/authApi";
 
@@ -31,19 +32,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
   // Form Đăng nhập
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // Form Đăng ký
   const [regUsername, setRegUsername] = useState("");
   const [regDisplayName, setRegDisplayName] = useState("");
   const [regPassword, setRegPassword] = useState("");
   const [regConfirmPassword, setRegConfirmPassword] = useState("");
+  const [showRegPassword, setShowRegPassword] = useState(false);
 
   // Kiểm tra độ mạnh mật khẩu thời gian thực
   const passCheck = checkPasswordStrength(regPassword);
-
-  // Chế độ nâng cao kết nối thẳng qua Port
-  const [showDirectPort, setShowDirectPort] = useState(false);
-  const [directPort, setDirectPort] = useState(defaultPort.toString());
 
   // Xử lý Đăng nhập
   const handleLogin = async (e: React.FormEvent) => {
@@ -69,31 +68,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
     }
   };
 
-  // Đăng nhập nhanh bằng tài khoản mẫu
-  const handleQuickLogin = async (username: string, port: number) => {
-    setLoginUsername(username);
-    setLoginPassword("123456");
-    setError(null);
-    setLockedMinutes(null);
-    setLoading(true);
-
-    try {
-      const res = await apiLogin(username, "123456", port);
-      if (res.success && res.user) {
-        onLoginSuccess(res.user, res.token);
-      } else {
-        setError(res.error || `Không thể đăng nhập tài khoản ${username}`);
-        if (res.lockedMinutes) {
-          setLockedMinutes(res.lockedMinutes);
-        }
-      }
-    } catch (err: any) {
-      setError(err.message || "Lỗi kết nối.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Xử lý Đăng ký
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,7 +75,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
 
     // Kiểm tra chính sách mật khẩu mạnh
     if (!passCheck.isValid) {
-      setError("Mật khẩu chưa đáp ứng đầy đủ chính sách mật khẩu mạnh bảo mật (Xem danh sách bên dưới).");
+      setError("Mật khẩu chưa đáp ứng đầy đủ tiêu chuẩn bảo mật (Xem danh sách bên dưới).");
       return;
     }
 
@@ -116,7 +90,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
         regUsername,
         regPassword,
         regDisplayName || regUsername,
-        undefined, // CSDL tự động gán cổng kế tiếp
+        undefined, // CSDL tự động gán Peer Node thông minh xoay vòng
         defaultPort
       );
       if (res.success && res.user) {
@@ -131,21 +105,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
     }
   };
 
-  // Kết nối trực tiếp qua Port (Chế độ tương thích cũ)
-  const handleDirectPortConnect = (e: React.FormEvent) => {
-    e.preventDefault();
-    const p = parseInt(directPort, 10);
-    if (!isNaN(p) && p > 0) {
-      onLoginSuccess({
-        id: `legacy_${p}`,
-        username: `peer_${p}`,
-        displayName: `Peer (${p})`,
-        nodePort: p,
-        createdAt: Date.now()
-      });
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-6 select-none font-sans">
       <div className="bg-white border border-[#E2E8F0] shadow-sm rounded-[10px] max-w-md w-full p-6 space-y-5">
@@ -157,12 +116,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
             </div>
             <div>
               <h2 className="text-[15px] font-bold text-[#0F172A] font-mono tracking-tight uppercase flex items-center gap-1.5">
-                <span>P2P Secure Network</span>
+                <span>Secure P2P Chat</span>
                 <span className="bg-[#E0F2FE] text-[#0369A1] text-[10px] px-1.5 py-0.5 rounded-[4px] font-mono">
-                  JWT & Lockout
+                  Online
                 </span>
               </h2>
-              <p className="text-xs text-[#64748B]">Hệ thống Chat Phân tán Zero SPOF & Định tuyến Mesh</p>
+              <p className="text-xs text-[#64748B]">Mạng Ngang Hàng Phân Tán • Bảo Mật Token JWT</p>
             </div>
           </div>
         </div>
@@ -197,7 +156,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
             }`}
           >
             <UserPlus className="w-3.5 h-3.5" />
-            <span>ĐĂNG KÝ </span>
+            <span>ĐĂNG KÝ MỚI</span>
           </button>
         </div>
 
@@ -234,7 +193,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
                   type="text"
                   value={loginUsername}
                   onChange={(e) => setLoginUsername(e.target.value)}
-                  placeholder="alice, bob, charlie..."
+                  placeholder="Nhập tên tài khoản..."
                   required
                   className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] pl-8 pr-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
                 />
@@ -248,14 +207,22 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
               </label>
               <div className="relative">
                 <input
-                  type="password"
+                  type={showLoginPassword ? "text" : "password"}
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
-                  placeholder="••••••"
+                  placeholder="••••••••"
                   required
-                  className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] pl-8 pr-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
+                  className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] pl-8 pr-10 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
                 />
                 <Lock className="w-3.5 h-3.5 text-[#94A3B8] absolute left-2.5 top-3" />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-2.5 top-2.5 text-[#94A3B8] hover:text-[#0F172A] transition-colors p-0.5 focus:outline-none"
+                  title={showLoginPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                >
+                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -264,44 +231,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
               disabled={loading}
               className="w-full bg-[#0F172A] hover:bg-[#1E293B] disabled:bg-[#94A3B8] text-white font-mono font-medium py-2.5 px-4 rounded-[6px] text-xs transition-colors flex items-center justify-center space-x-2"
             >
-              <span>{loading ? "ĐANG XÁC THỰC JWT..." : "ĐĂNG NHẬP (CẤP TOKEN JWT)"}</span>
+              <span>{loading ? "ĐANG ĐĂNG NHẬP..." : "ĐĂNG NHẬP"}</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
-
-            {/* Quick Login Chips cho Demo */}
-            <div className="pt-2 border-t border-[#F1F5F9]">
-              <div className="text-[11px] font-mono text-[#64748B] flex items-center gap-1 mb-1.5">
-                <Sparkles className="w-3 h-3 text-[#EAB308]" />
-                <span>Đăng nhập nhanh mẫu (Mật khẩu: 123456):</span>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin("alice", 3001)}
-                  className="flex-1 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] border border-[#E2E8F0] rounded-[4px] py-1 text-xs font-mono font-medium transition-colors"
-                >
-                  Alice
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin("bob", 3002)}
-                  className="flex-1 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] border border-[#E2E8F0] rounded-[4px] py-1 text-xs font-mono font-medium transition-colors"
-                >
-                  Bob
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin("charlie", 3003)}
-                  className="flex-1 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] border border-[#E2E8F0] rounded-[4px] py-1 text-xs font-mono font-medium transition-colors"
-                >
-                  Charlie
-                </button>
-              </div>
-            </div>
           </form>
         )}
 
-        {/* TAB 2: FORM ĐĂNG KÝ BẢO MẬT */}
+        {/* TAB 2: FORM ĐĂNG KÝ */}
         {tab === "register" && (
           <form onSubmit={handleRegister} className="space-y-3">
             <div>
@@ -312,8 +248,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
                 <input
                   type="text"
                   value={regUsername}
-                  onChange={(e) => setRegUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
-                  placeholder="viết liền không dấu, vd: david"
+                  onChange={(e) => setRegUsername(e.target.value.toLowerCase().replace(/\s+/g, ""))}
+                  placeholder="vd: minh, phu, tuan..."
                   required
                   className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] pl-8 pr-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
                 />
@@ -329,7 +265,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
                 type="text"
                 value={regDisplayName}
                 onChange={(e) => setRegDisplayName(e.target.value)}
-                placeholder="vd: David Nguyễn"
+                placeholder="vd: Minh Trần, Phú Nguyễn..."
                 required
                 className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
               />
@@ -342,14 +278,22 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
                 </label>
                 <div className="relative">
                   <input
-                    type="password"
+                    type={showRegPassword ? "text" : "password"}
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
                     placeholder="Mật khẩu mạnh"
                     required
-                    className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] pl-8 pr-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
+                    className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] pl-8 pr-10 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
                   />
                   <Lock className="w-3.5 h-3.5 text-[#94A3B8] absolute left-2.5 top-3" />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegPassword(!showRegPassword)}
+                    className="absolute right-2.5 top-2.5 text-[#94A3B8] hover:text-[#0F172A] transition-colors p-0.5 focus:outline-none"
+                    title={showRegPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                  >
+                    {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -357,14 +301,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
                 <label className="block text-[11px] font-mono font-semibold uppercase tracking-wider text-[#0F172A] mb-1">
                   Xác nhận MK
                 </label>
-                <input
-                  type="password"
-                  value={regConfirmPassword}
-                  onChange={(e) => setRegConfirmPassword(e.target.value)}
-                  placeholder="Nhập lại mật khẩu"
-                  required
-                  className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
-                />
+                <div className="relative">
+                  <input
+                    type={showRegPassword ? "text" : "password"}
+                    value={regConfirmPassword}
+                    onChange={(e) => setRegConfirmPassword(e.target.value)}
+                    placeholder="Nhập lại mật khẩu"
+                    required
+                    className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-[6px] pl-8 pr-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#0F172A] focus:bg-white transition-colors"
+                  />
+                  <Lock className="w-3.5 h-3.5 text-[#94A3B8] absolute left-2.5 top-3" />
+                </div>
               </div>
             </div>
 
@@ -381,70 +328,32 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
                 </span>
                 <span className={`flex items-center gap-1 ${passCheck.hasUpper ? "text-[#10B981] font-semibold" : "text-[#94A3B8]"}`}>
                   {passCheck.hasUpper ? <CheckCircle2 className="w-3 h-3 text-[#10B981]" /> : <XCircle className="w-3 h-3" />}
-                  Có chữ in hoa (A-Z)
-                </span>
-                <span className={`flex items-center gap-1 ${passCheck.hasLower ? "text-[#10B981] font-semibold" : "text-[#94A3B8]"}`}>
-                  {passCheck.hasLower ? <CheckCircle2 className="w-3 h-3 text-[#10B981]" /> : <XCircle className="w-3 h-3" />}
-                  Có chữ in thường (a-z)
+                  Ít nhất 1 chữ hoa (A-Z)
                 </span>
                 <span className={`flex items-center gap-1 ${passCheck.hasNumber ? "text-[#10B981] font-semibold" : "text-[#94A3B8]"}`}>
                   {passCheck.hasNumber ? <CheckCircle2 className="w-3 h-3 text-[#10B981]" /> : <XCircle className="w-3 h-3" />}
-                  Có chữ số (0-9)
+                  Ít nhất 1 chữ số (0-9)
                 </span>
-                <span className={`flex items-center gap-1 col-span-2 ${passCheck.hasSpecial ? "text-[#10B981] font-semibold" : "text-[#94A3B8]"}`}>
+                <span className={`flex items-center gap-1 ${passCheck.hasSpecial ? "text-[#10B981] font-semibold" : "text-[#94A3B8]"}`}>
                   {passCheck.hasSpecial ? <CheckCircle2 className="w-3 h-3 text-[#10B981]" /> : <XCircle className="w-3 h-3" />}
-                  Có ký tự đặc biệt (!@#$%^&*...)
+                  1 ký tự đặc biệt (@#$...)
                 </span>
-              </div>
-            </div>
-
-            <div className="pt-1">
-              <div className="text-[11px] font-mono text-[#64748B] flex items-center justify-between">
-                <span>Nút mạng Peer:</span>
-                <span className="text-[#10B981] font-semibold">Tự động gán cổng từ CSDL</span>
               </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full bg-[#0F172A] hover:bg-[#1E293B] disabled:bg-[#94A3B8] text-white font-mono font-medium py-2.5 px-4 rounded-[6px] text-xs transition-colors flex items-center justify-center space-x-2 mt-2"
+              disabled={loading || !passCheck.isValid}
+              className="w-full bg-[#0F172A] hover:bg-[#1E293B] disabled:bg-[#94A3B8] text-white font-mono font-medium py-2.5 px-4 rounded-[6px] text-xs transition-colors flex items-center justify-center space-x-2"
             >
-              <span>{loading ? "ĐANG TẠO TÀI KHOẢN & JWT..." : "TẠO TÀI KHOẢN & CẤP TOKEN"}</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <span>{loading ? "ĐANG TẠO TÀI KHOẢN..." : "ĐĂNG KÝ TÀI KHOẢN MỚI"}</span>
+              <UserPlus className="w-3.5 h-3.5" />
             </button>
           </form>
         )}
 
-        {/* Footer Toggle Chế độ Port Chuyên gia */}
-        <div className="pt-2 border-t border-[#E2E8F0] space-y-2">
-          <button
-            type="button"
-            onClick={() => setShowDirectPort(!showDirectPort)}
-            className="text-[11px] font-mono text-[#64748B] hover:text-[#0F172A] underline flex items-center gap-1"
-          >
-            <Server className="w-3 h-3" />
-            <span>{showDirectPort ? "Ẩn tùy chọn nâng cao" : "Chế độ Chuyên gia: Kết nối trực tiếp Port"}</span>
-          </button>
-
-          {showDirectPort && (
-            <form onSubmit={handleDirectPortConnect} className="pt-2 flex gap-2">
-              <input
-                type="number"
-                value={directPort}
-                onChange={(e) => setDirectPort(e.target.value)}
-                placeholder="3001"
-                className="w-24 bg-[#F8FAFC] border border-[#CBD5E1] rounded-[4px] px-2 py-1 text-xs font-mono text-[#0F172A]"
-              />
-              <button
-                type="submit"
-                className="bg-[#E2E8F0] hover:bg-[#CBD5E1] text-[#0F172A] px-3 py-1 text-xs font-mono rounded-[4px] transition-colors"
-              >
-                Vào qua Port
-              </button>
-            </form>
-          )}
-
+        {/* Footer thông tin P2P */}
+        <div className="pt-2 border-t border-[#E2E8F0]">
           <div className="flex items-center justify-between text-[11px] font-mono text-[#94A3B8] pt-1">
             <span className="flex items-center gap-1">
               <Server className="w-3 h-3" />
@@ -452,7 +361,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
             </span>
             <span className="flex items-center gap-1">
               <Layers className="w-3 h-3" />
-              PostgreSQL Multi-Tenant
+              Tự động phân bổ Peer Node
             </span>
           </div>
         </div>

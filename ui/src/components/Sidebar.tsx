@@ -81,7 +81,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               No Peer Connected
             </p>
             <p className="text-[12px] text-[#64748B] max-w-[220px] mx-auto leading-relaxed font-sans">
-              Khởi động thêm node thứ hai (ví dụ: Bob trên cổng 3002) để kết nối P2P.
+              Đang chờ thêm người dùng kết nối vào mạng P2P...
             </p>
           </div>
         ) : (
