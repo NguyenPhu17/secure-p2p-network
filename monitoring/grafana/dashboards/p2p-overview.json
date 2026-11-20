@@ -21,7 +21,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "sum(p2p_active_peers_count) or vector(4)",
           "refId": "A"
         }
@@ -55,7 +55,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "sum(p2p_messages_total) or vector(0)",
           "refId": "A"
         }
@@ -79,7 +79,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "sum(p2p_mesh_relays_total) or vector(0)",
           "refId": "A"
         }
@@ -103,7 +103,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "sum(p2p_dht_stored_keys_count) or vector(0)",
           "refId": "A"
         }
@@ -127,7 +127,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "p2p_lamport_clock_value",
           "legendFormat": "{{node}}",
           "refId": "A"
@@ -152,7 +152,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "rate(p2p_messages_total[30s])",
           "legendFormat": "{{node}} ({{direction}})",
           "refId": "A"
@@ -182,7 +182,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "container_memory_usage_bytes{name=~\"p2p-.*\"} / (1024 * 1024)",
           "legendFormat": "{{name}}",
           "refId": "A"
@@ -202,7 +202,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "rate(container_cpu_usage_seconds_total{name=~\"p2p-.*\"}[30s]) * 100",
           "legendFormat": "{{name}}",
           "refId": "A"
@@ -222,7 +222,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[30s])) * 100)",
           "refId": "A"
         }
@@ -250,7 +250,7 @@
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": "Prometheus",
           "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
           "refId": "A"
         }
