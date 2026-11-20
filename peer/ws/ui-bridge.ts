@@ -19,17 +19,25 @@ export class UIBridge {
 
   // Bản đồ ánh xạ mặc định giữa UI Port và Tên Node Container P2P
   private portToNodeMap: Record<number, string> = {
-    3001: "peer-1",
-    3002: "peer-2",
-    3003: "peer-3",
-    3004: "peer-4"
+    3001: "Node-1",
+    3002: "Node-2",
+    3003: "Node-3",
+    3004: "Node-4"
   };
 
   private nodeToPortMap: Record<string, number> = {
+    "Node-1": 3001,
+    "Node-2": 3002,
+    "Node-3": 3003,
+    "Node-4": 3004,
     "peer-1": 3001,
     "peer-2": 3002,
     "peer-3": 3003,
-    "peer-4": 3004
+    "peer-4": 3004,
+    "node-1": 3001,
+    "node-2": 3002,
+    "node-3": 3003,
+    "node-4": 3004
   };
 
   private activeUsername: string | null = null;
@@ -53,20 +61,10 @@ export class UIBridge {
       const onlineNodes = this.peerController.getOnlinePeers();
       const now = Date.now();
 
-      // Cập nhật bản đồ ánh xạ tài khoản -> node từ DB
-      for (const u of users) {
-        if (u.nodePort) {
-          const userName = u.username;
-          this.portToNodeMap[u.nodePort] = userName;
-          this.nodeToPortMap[userName] = u.nodePort;
-        }
-      }
-
       // Xác định tên hiển thị của tài khoản gán cho node hiện tại
       const localUser = users.find((u) => u.nodePort === this.uiPort);
       if (localUser) {
         this.activeUsername = localUser.username;
-        this.peerController.setDisplayName(localUser.username);
       }
       const meName = localUser
         ? (localUser.displayName || localUser.username)
@@ -80,23 +78,22 @@ export class UIBridge {
         if (localUser && u.username === localUser.username) continue;
 
         const peerUserName = u.displayName || u.username;
-        const targetNodeName = this.portToNodeMap[u.nodePort];
-        const onlineNode = targetNodeName
-          ? onlineNodes.find(
-              (n) => n.displayName.toLowerCase() === targetNodeName.toLowerCase()
-            )
-          : undefined;
+        const targetNodeName = this.portToNodeMap[u.nodePort] || `Node-${u.nodePort - 3000}`;
+        const targetTcpPort = u.nodePort ? u.nodePort + 5000 : 0;
+        const onlineNode = onlineNodes.find(
+          (n) => (n.displayName && n.displayName.toLowerCase() === targetNodeName.toLowerCase()) ||
+                 (targetTcpPort && n.tcpPort === targetTcpPort)
+        );
 
         // Tiêu chuẩn Online thời gian thực:
         // Người dùng được tính là Online nếu có heartbeat trong vòng 10 giây gần nhất (now - lastSeenAt <= 10000)
-        // và node P2P đang hoạt động.
         const isRecent = (now - (u.lastSeenAt || 0)) <= 10000;
-        const isOnline = isRecent && (u.nodePort === this.uiPort || !!onlineNode);
+        const isOnline = isRecent;
 
         const peerInfo = {
           displayName: peerUserName,
-          ip: onlineNode?.ip || (u.nodePort === this.uiPort ? "127.0.0.1" : "offline"),
-          tcpPort: onlineNode?.tcpPort || (u.nodePort === this.uiPort ? this.peerController.tcpPort : 0),
+          ip: onlineNode?.ip || "127.0.0.1",
+          tcpPort: onlineNode?.tcpPort || targetTcpPort || 0,
           nodeId: onlineNode?.nodeId || "",
           online: isOnline,
           lastSeen: u.lastSeenAt || 0
@@ -147,8 +144,8 @@ export class UIBridge {
       const users = await this.peerController.getUserService().listUsers();
       const copy = { ...msg };
 
-      // Dịch sender nếu là node name (Alice, Bob, Charlie, David)
-      const senderPort = this.nodeToPortMap[copy.sender];
+      // Dịch sender nếu là node name (Node-1, Node-2, peer-1...)
+      const senderPort = this.nodeToPortMap[copy.sender] || (copy.sender ? this.nodeToPortMap[copy.sender.toLowerCase()] : undefined);
       if (senderPort) {
         const senderUser = users.find((u) => u.nodePort === senderPort);
         if (senderUser) {
@@ -157,7 +154,7 @@ export class UIBridge {
       }
 
       // Dịch receiver nếu là node name
-      const receiverPort = this.nodeToPortMap[copy.receiver];
+      const receiverPort = this.nodeToPortMap[copy.receiver] || (copy.receiver ? this.nodeToPortMap[copy.receiver.toLowerCase()] : undefined);
       if (receiverPort) {
         const receiverUser = users.find((u) => u.nodePort === receiverPort);
         if (receiverUser) {
@@ -268,7 +265,9 @@ export class UIBridge {
         // Endpoint xuất dữ liệu giám sát cho Prometheus: GET /metrics
         if (cleanPath === "/metrics" && req.method === "GET") {
           try {
-            const nodeLabel = this.activeUsername || this.peerController.displayName;
+            const users = await this.peerController.getUserService().listUsers();
+            const localUser = users.find((u) => u.nodePort === this.uiPort);
+            const nodeLabel = localUser ? localUser.username : (this.activeUsername || this.peerController.displayName);
             this.metrics.activePeersGauge.set(
               { node: nodeLabel },
               this.peerController.getOnlinePeers().length
