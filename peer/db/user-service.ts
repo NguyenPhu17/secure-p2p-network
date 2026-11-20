@@ -87,12 +87,13 @@ export class UserService {
         return { success: false, error: "Tên đăng nhập đã tồn tại, vui lòng chọn tên khác." };
       }
 
-      // 3. Tự động gán cổng Node P2P tiếp theo (3001, 3002, 3003, 3004, 3005...)
+      // 3. Tự động phân bổ xoay vòng vào 4 Node P2P đang chạy (3001, 3002, 3003, 3004)
+      const AVAILABLE_PORTS = [3001, 3002, 3003, 3004];
       let assignedPort = nodePort;
-      if (!assignedPort || assignedPort <= 0) {
-        const maxRes = await this.pool.query("SELECT MAX(node_port) as max_port FROM users");
-        const currentMax = maxRes.rows[0]?.max_port ? Number(maxRes.rows[0].max_port) : 3000;
-        assignedPort = currentMax + 1;
+      if (!assignedPort || !AVAILABLE_PORTS.includes(assignedPort)) {
+        const countRes = await this.pool.query("SELECT COUNT(*) as total FROM users");
+        const total = Number(countRes.rows[0]?.total || 0);
+        assignedPort = AVAILABLE_PORTS[total % AVAILABLE_PORTS.length];
       }
 
       const salt = crypto.randomBytes(16).toString("hex");

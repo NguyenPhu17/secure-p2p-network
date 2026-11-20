@@ -280,21 +280,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, defaultP
                   onClick={() => handleQuickLogin("alice", 3001)}
                   className="flex-1 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] border border-[#E2E8F0] rounded-[4px] py-1 text-xs font-mono font-medium transition-colors"
                 >
-                  Alice (:3001)
+                  Alice
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickLogin("bob", 3002)}
                   className="flex-1 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] border border-[#E2E8F0] rounded-[4px] py-1 text-xs font-mono font-medium transition-colors"
                 >
-                  Bob (:3002)
+                  Bob
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickLogin("charlie", 3003)}
                   className="flex-1 bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] border border-[#E2E8F0] rounded-[4px] py-1 text-xs font-mono font-medium transition-colors"
                 >
-                  Charlie (:3003)
+                  Charlie
                 </button>
               </div>
             </div>

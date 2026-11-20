@@ -84,7 +84,8 @@ export const App: React.FC = () => {
     if (token) {
       localStorage.setItem("p2p_auth_token", token);
     }
-    window.history.replaceState({}, "", `?port=${user.nodePort}`);
+    // Giữ sạch đường dẫn URL, không đính kèm ?port=
+    window.history.replaceState({}, "", window.location.pathname);
   };
 
   const handleLogout = () => {
