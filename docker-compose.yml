@@ -22,7 +22,6 @@ services:
     command: npm run manager
     ports:
       - "7000:7000"
-      - "4000:4000"
     environment:
       - MANAGER_PORT=4000
       - REGISTRY_PORT=7000
