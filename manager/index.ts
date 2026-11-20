@@ -181,8 +181,8 @@ const httpServer = http.createServer(async (req, res) => {
         if (authRes.success && authRes.user) {
           // Tự động khởi động Peer Node cho người dùng mới
           spawnPeerNode(authRes.user.username, authRes.user.displayName, authRes.user.nodePort);
-          // Cho node 1000ms để bind cổng UI WebSocket
-          await new Promise((r) => setTimeout(r, 1000));
+          // Cho node 2500ms để khởi động, bind WebSocket port và kết nối DB
+          await new Promise((r) => setTimeout(r, 2500));
         }
         res.writeHead(authRes.success ? 200 : 400, { "Content-Type": "application/json" });
         res.end(JSON.stringify(authRes));
@@ -205,7 +205,7 @@ const httpServer = http.createServer(async (req, res) => {
         if (authRes.success && authRes.user) {
           // Nếu Node chưa chạy (ví dụ vừa khởi động lại hệ thống), tự động bật lại
           spawnPeerNode(authRes.user.username, authRes.user.displayName, authRes.user.nodePort);
-          await new Promise((r) => setTimeout(r, 600));
+          await new Promise((r) => setTimeout(r, 2500));
         }
         res.writeHead(authRes.success ? 200 : 400, { "Content-Type": "application/json" });
         res.end(JSON.stringify(authRes));

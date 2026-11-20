@@ -99,7 +99,9 @@ export const App: React.FC = () => {
     window.history.replaceState({}, "", window.location.pathname);
   };
 
-  if (!currentUser || !wsPort || !connected) {
+  // Hiển thị LoginModal nếu chưa có user hoặc chưa có wsPort
+  // Không block bởi !connected vì peer node cần thời gian khởi động sau login
+  if (!currentUser || !wsPort) {
     return (
       <LoginModal
         defaultPort={wsPort || 3001}
