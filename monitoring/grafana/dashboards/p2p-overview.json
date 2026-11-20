@@ -29,7 +29,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(p2p_active_peers_count) or vector(0)",
+          "expr": "count(up{job=\"p2p-peers\"} == 1) or count(p2p_active_peers_count)",
           "refId": "A"
         }
       ],
