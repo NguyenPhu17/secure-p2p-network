@@ -51,13 +51,14 @@ const CANDIDATE_PORTS = [3001, 3002, 3003, 3004, 3005];
  */
 function getCentralAuthUrl(path: string): string {
   if (typeof window === "undefined") {
-    return `http://localhost:3000${path}`;
+    return `http://localhost:4000${path}`;
   }
   const isReverseProxy = window.location.protocol === "https:" || window.location.port === "80" || window.location.port === "";
   if (isReverseProxy) {
+    // Qua reverse proxy Nginx, Manager trả về /api/ luôn
     return `${window.location.origin}${path}`;
   }
-  return `http://${window.location.hostname}:3000${path}`;
+  return `http://${window.location.hostname}:4000${path}`;
 }
 
 /**

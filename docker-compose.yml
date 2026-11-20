@@ -22,10 +22,11 @@ services:
     command: npm run manager
     ports:
       - "7000:7000"
+      - "4000:4000"
       - "3001-3010:3001-3010"
       - "8001-8010:8001-8010"
     environment:
-      - MANAGER_PORT=3000
+      - MANAGER_PORT=4000
       - REGISTRY_PORT=7000
       - DB_HOST=postgres
       - DB_PORT=5432

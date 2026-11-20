@@ -152,7 +152,8 @@ async function autoRestoreExistingNodes(): Promise<void> {
 // ========================================================
 // HTTP REST API Gateway (Port 3000)
 // ========================================================
-const httpPort = parseInt(process.env.MANAGER_PORT || "3000", 10);
+// Manager HTTP Gateway chạy ở port 4000 (tránh xung đột với Grafana ở port 3000)
+const httpPort = parseInt(process.env.MANAGER_PORT || "4000", 10);
 
 const httpServer = http.createServer(async (req, res) => {
   // Cấu hình CORS
