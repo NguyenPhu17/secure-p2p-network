@@ -1,147 +1,175 @@
 # Thiết kế và Hiện thực Mạng Phân tán P2P Dựa trên Kademlia DHT và Định tuyến Mesh Relay Kết hợp Bảo mật E2EE Phi Tập Trung (Zero SPOF)
 ## Đề tài môn học: Các hệ thống phân tán (Distributed Systems)
 
-Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân tán Peer-to-Peer (P2P) kết hợp bảng băm phân tán Kademlia DHT (Zero SPOF), cơ chế định tuyến đa chặng Mesh Relay và giải pháp bảo mật mã hóa đầu cuối E2EE phi tập trung (Zero SPOF) dựa trên trao đổi khóa Diffie-Hellman (ECDH / X25519) và chữ ký số Ed25519. Ứng dụng thực nghiệm: Hệ thống chat thời gian thực và chia sẻ tập tin phân tán.
+Dự án nghiên cứu, thiết kế và triển khai kiến trúc mạng phân tán Peer-to-Peer (P2P) kết hợp bảng băm phân tán Kademlia DHT (Zero SPOF), cơ chế định tuyến đa chặng Mesh Relay, giải pháp bảo mật mã hóa đầu cuối E2EE phi tập trung, đồng hồ logic Lamport & Vector Clocks, hệ thống điều phối Node theo yêu cầu (Dynamic On-Demand Peer Spawner), xác thực JWT có kiểm soát Brute-force và tầng giám sát thời gian thực với Prometheus & Grafana.
 
 ---
 
-## 📌 PHẠM VI & KIẾN TRÚC HỆ THỐNG
-- **Kiến trúc Phi tập trung hoàn toàn (Pure P2P DHT - Zero SPOF)**:
-  - Hệ thống sử dụng bảng băm phân tán **Kademlia DHT** để các peer tự khám phá lẫn nhau mà **không cần bất kỳ Registry trung tâm nào**.
-  - Không gian định danh 160-bit SHA-1, khoảng cách metric XOR \(d(x, y) = x \oplus y\), 160 K-Buckets kết hợp thuật toán trục xuất LRU.
-  - **Chuẩn hóa định danh mật mã học (Identity Consensus & Anti Name-Collision)**:
-    - Node ID được sinh từ **`SHA1(PublicKey)`** (cặp khóa Ed25519) thay vì `SHA1(displayName)`.
-    - Khi có nhiều node cùng đặt tên `--name Alice`, mỗi node vẫn sở hữu một Node ID 160-bit duy nhất; bảng K-bucket của các peer khác (như Bob) không bị ghi đè loạn xạ.
-    - Phát hiện xung đột tên trên DHT (`[NAME COLLISION]`) và bảo vệ quyền sở hữu định danh.
-  - **Hàn gắn phân mảnh mạng (Network Partition Healing)**:
-    - Cơ chế định kỳ tự động dò quét và tái kích hoạt bootstrap tới các bootstrap / known peers đã bị rớt kết nối hoặc bị xóa khỏi K-bucket khi mạng bị chia cắt thành 2 nửa cô lập (Partition).
-    - Khi đường truyền vật lý phục hồi, hai nửa mạng **tự động kết nối lại và hợp nhất K-bucket mà không cần khởi động lại bất kỳ node nào**.
-  - Các hàm RPC giao thức: `DHT_PING`, `DHT_PONG`, `DHT_FIND_NODE`, `DHT_FIND_NODE_RESP`, `DHT_STORE`, `DHT_FIND_VALUE`.
-  - Cơ chế giám sát sống/chết (Liveness Check) phi tập trung thông qua chu kỳ DHT Ping định kỳ giữa các peer, loại bỏ hoàn toàn Single Point of Failure (SPOF).
-- **Bảo mật E2EE Phi Tập Trung (Decentralized E2EE - Loại bỏ hoàn toàn KDC)**:
-  - **Mâu thuẫn kiến trúc KDC**: Mô hình KDC (Key Distribution Center như Kerberos / Needham-Schroeder) là kiến trúc Client-Server tập trung, tạo ra Single Point of Failure (SPOF). Nếu Server KDC sập, hai peer không thể xin khóa phiên để bảo mật, làm vô hiệu hóa thuộc tính Zero SPOF của DHT.
-  - **Khắc phục chuẩn phân tán**: Hệ thống sử dụng mô hình **E2EE (End-to-End Encryption) phi tập trung**:
-    - Mỗi peer tự sinh và lưu trữ cục bộ cặp khóa **Ed25519** trong SQLite (`node_identity`), định danh mật mã học bằng Node ID = `SHA1(PublicKey)`.
-    - Public Key được phát tán trực tiếp qua Kademlia DHT.
-    - Hai peer trao đổi khóa phiên trực tiếp bằng giao thức **Diffie-Hellman trên đường cong Elliptic (ECDH / X25519)** và xác thực bằng chữ ký Ed25519 chống Man-in-the-Middle (MITM), hoàn toàn không phụ thuộc bất kỳ máy chủ KDC trung gian nào.
-- **Định tuyến Đa chặng Mesh Relay (Multi-hop Overlay Routing)**:
-  - Khi đường truyền trực tiếp giữa Alice và Bob bị lỗi (khác mạng LAN, sau tường lửa/NAT, hoặc rớt mạng cục bộ), hệ thống **tự động kích hoạt cơ chế Mesh Relay** mượn một Peer thứ 3 (như Charlie) chuyển tiếp gói tin.
-  - Đóng gói phong bì `RELAY_FORWARD`, lưu vết tuyến đường `route: ["Alice", "Charlie", "Bob"]`, chống lặp vòng định tuyến (Routing Loop Prevention), giới hạn chặng TTL (`hopCount < maxHops`), và bộ nhớ đệm đảo chiều (Reverse Path Caching) cho phản hồi ACK 2 chiều.
-- **Thứ tự sự kiện và Tính nhân quả (Logical Clocks & Causality - Leslie Lamport 1978)**:
-  - **Khắc phục triệt để Clock Drift / Clock Skew**: Giải quyết tiên đề cốt lõi của hệ phân tán (Leslie Lamport 1978: *"Không tồn tại đồng hồ vật lý toàn cục đồng bộ tuyệt đối"*).
-  - **Đồng hồ logic Lamport & Vector Clocks**:
-    - Mỗi gói tin `BaseMessage` đều mang trường `lamport_clock` (Scalar Lamport Clock) và `vector_clock` (Vector Clocks map).
-    - Cập nhật đồng hồ theo 2 quy tắc Lamport: Gửi/nội bộ: $L = L + 1$; Nhận: $L_{rec} = \max(L_{rec}, L_{msg}) + 1$.
-    - **Lamport Total Order**: Sắp xếp lịch sử tin nhắn tại SQLite và UI theo thứ tự toàn phần $(L, \text{sender}, \text{seq}, \text{timestamp})$. Dù đồng hồ máy Bob bị lệch lùi 1 giờ so với Alice hoặc gói tin bị trễ qua nhiều chặng Mesh Relay, **câu hỏi của Alice ($L=1$) luôn luôn hiển thị trước câu trả lời của Bob ($L=4$)**.
-    - **Phân giải xung đột DHT (Conflict Resolution)**: Khi ghi đè key-value trên DHT, node so sánh `lamport_clock` thay vì `Date.now()`, kiên quyết từ chối ghi đè dữ liệu mới hơn bằng dữ liệu cũ bị trễ mạng.
-    - **Bền vững & Đơn điệu (Monotonicity Across Restarts)**: Lưu trữ trạng thái đồng hồ logic vào bảng `node_state` trong SQLite, đảm bảo sau khi restart node, đồng hồ không bao giờ bị thụt lùi.
-    - **Trực quan hóa UI**: Hiển thị badge `L:<number>` ngay trên bong bóng chat của từng tin nhắn.
-- **Phần truyền nhận TCP P2P Direct**:
-  - Peer Backend mở kết nối TCP Socket thô trực tiếp giữa các Peer, cơ chế Framing 4-bytes Length-prefixed chống vỡ/dính gói tin, chia nhỏ file thành chunk 64KB, hàng đợi tin nhắn offline, chống trùng tin nhắn qua UUID (`message_id`).
-- **Lưu trữ cục bộ**: Mỗi Peer sở hữu database SQLite độc lập (`better-sqlite3` / `node:sqlite`), tối ưu hóa RAM với WAL mode và giới hạn cache 2MB.
-- **Giao diện**: React + Vite + Tailwind CSS với bố cục 3 vùng (Sidebar hiển thị Node ID và danh sách peer, Khung chat & tiến độ file, Panel xem Protocol Logs trực tiếp có tab lọc DHT).
-- **Trạng thái bảo mật**: Truyền **Plaintext** (có chủ đích) phục vụ bắt gói tin Wireshark so sánh trước/sau khi kích hoạt mã hóa E2EE ở Giai đoạn 2.
+## 📌 PHẠM VI & TÍNH NĂNG NỔI BẬT
+
+### 1. Kiến trúc Phi tập trung hoàn toàn (Pure P2P DHT - Zero SPOF)
+- **Kademlia DHT**: Các peer tự khám phá lẫn nhau mà không cần bất kỳ máy chủ Registry tập trung nào.
+- Không gian định danh 160-bit SHA-1, khoảng cách logic metric XOR \(d(x, y) = x \oplus y\), 160 K-Buckets kết hợp thuật toán trục xuất LRU.
+- **Node ID mật mã học**: $\text{Node ID} = \text{SHA1}(\text{PublicKey})$ (sinh từ cặp khóa Ed25519) chống xung đột tên (Anti Name-Collision) và ngăn chặn mạo danh ID.
+- **Hàn gắn phân mảnh mạng (Network Partition Healing)**: Tự động dò quét và tái kết nối bootstrap khi mạng bị chia cắt rồi phục hồi.
+- Các hàm RPC giao thức: `DHT_PING`, `DHT_PONG`, `DHT_FIND_NODE`, `DHT_FIND_NODE_RESP`, `DHT_STORE`, `DHT_FIND_VALUE`.
+
+### 2. Điều phối Peer Node theo yêu cầu (On-Demand Dynamic Spawner)
+- **Không có node ảo chạy sẵn**: Khi Docker khởi động, số lượng peer ban đầu là **0**.
+- **Tự động sinh Node khi đăng ký**: Khi người dùng đăng ký tài khoản mới trên giao diện Web, `p2p-manager` tự động cấp phát cổng độc quyền (UI port $3000+N$, TCP port $8000+N$) và kích hoạt một tiến trình Node riêng biệt chạy ngầm.
+- **Cô lập dữ liệu tuyệt đối (Multi-Tenancy)**: Dữ liệu tin nhắn, danh bạ peer được phân định nghiêm ngặt theo `node_owner` trong PostgreSQL. Mỗi tài khoản chỉ xem được dữ liệu của chính mình.
+
+### 3. Đồng hồ Logic (Leslie Lamport 1978) & Vector Clocks
+- Khắc phục triệt để hiện tượng lệch đồng hồ vật lý (Clock Skew / NTP Drift).
+- Gắn nhãn `lamport_clock` và `vector_clock` lên từng gói tin để đảm bảo trật tự quan hệ nhân quả (Causality & Happens-Before).
+- Tin nhắn luôn được hiển thị đúng trình tự thời gian logic trên giao diện.
+
+### 4. Định tuyến 2 lớp: Direct TCP Socket & Mesh Relay Đa chặng
+- **Ưu tiên 1 - Direct Socket**: Mở kết nối TCP 1-chặng gửi trực tiếp giữa hai peer thông qua địa chỉ tra cứu từ DHT.
+- **Ưu tiên 2 - Mesh Relay**: Nếu đường truyền trực tiếp bị chặn firewall hoặc lỗi NAT, hệ thống tự động mượn một peer trung gian thứ 3 để chuyển tiếp gói tin (mang nhãn `RELAY_FORWARD`, có TTL chống lặp vòng).
+
+### 5. Hộp thư ngoại tuyến phân tán (Distributed Mailbox trên DHT)
+- Nếu người nhận đang Offline, gói tin được đưa vào Distributed Mailbox lưu trữ tạm thời trên 3 node DHT gần nhất.
+- Khi người nhận online trở lại, node tự động truy vấn `DHT_FIND_VALUE` để tải toàn bộ tin nhắn chưa đọc về máy.
+
+### 6. Truyền tập tin phân đoạn (Chunked File Transfer 64KB)
+- Chia nhỏ tập tin thành các mảnh 64KB, gửi tuần tự và xác nhận bằng `FILE_ACK`.
+- Kiểm tra toàn vẹn tập tin sau khi ráp nối bằng mã băm SHA-256.
+
+### 7. Tầng giám sát thời gian thực (Prometheus & Grafana)
+- Endpoint `/metrics` chuẩn Prometheus trên từng Peer Node.
+- Dashboard Grafana trực quan hóa số lượng Peer Online thời gian thực (`p2p_active_peers_count`), tổng số gói tin, dung lượng truyền nhận và tài nguyên CPU/RAM container.
 
 ---
 
-## 🛠️ CÀI ĐẶT & CHUẨN BỊ
-Yêu cầu: **Node.js v20+** (Khuyến nghị Node.js v22 hoặc v24).
+## 🏛️ KIẾN TRÚC HỆ THỐNG & CỔNG DỊCH VỤ
 
+```mermaid
+flowchart TD
+    Client["Trình duyệt Client"] -- "HTTP /api & WS /peer-ws/<port>" --> Nginx["Nginx (p2p-ui : Port 80)"]
+    Nginx -- "Proxy HTTP /api" --> Manager["p2p-manager (:4000)"]
+    Nginx -- "Proxy WS /peer-ws/<port>" --> NodeProcess["Peer Node Process (:3001, :3002,...)"]
+    Manager -- "Lưu tài khoản" --> Postgres[(p2p-postgres :5432)]
+    Manager -- "Tự động spawn tiến trình Node" --> NodeProcess
+    NodeProcess <== "Direct TCP Socket (:8001 <-> :8002)" ==> NodeProcess
+    Prometheus["Prometheus (:9090)"] -- "Scrape /metrics" --> NodeProcess
+    Grafana["Grafana (:3000)"] -- "Query Metrics" --> Prometheus
+```
+
+| Dịch vụ Container | Cổng Host | Giao thức | Chức năng |
+| :--- | :--- | :--- | :--- |
+| **`p2p-ui`** | `80` (và `5173`) | HTTP / WS | Nginx phục vụ React SPA & Reverse Proxy duy nhất |
+| **`p2p-manager`** | Nội bộ (`:4000`) | HTTP / TCP | Gateway xác thực, cấp JWT & Tự động spawn Peer Node |
+| **`p2p-postgres`** | `5432` | TCP | Cơ sở dữ liệu PostgreSQL lưu trữ Users, Messages, DHT |
+| **`p2p-grafana`** | `3000` | HTTP | Bảng điều khiển giám sát hệ thống (admin / admin) |
+| **`p2p-prometheus`** | `9090` | HTTP | Thu thập số liệu giám sát từ các Peer Node |
+| **`p2p-cadvisor`** | `8088` | HTTP | Giám sát tài nguyên Docker Container |
+| **`p2p-node-exporter`**| `9100` | HTTP | Giám sát tài nguyên máy chủ host |
+
+---
+
+## 🚀 HƯỚNG DẪN KHỞI ĐỘNG HỆ THỐNG TỪ ĐẦU (CLEAN START)
+
+### Bước 1: Kéo mã nguồn mới nhất
 ```bash
-# Cài đặt thư viện Backend
-npm install
+cd ~/secure-p2p-network
+git pull origin main
+```
 
-# Cài đặt thư viện Frontend UI
-cd ui
-npm install
-cd ..
+### Bước 2: Dọn sạch toàn bộ dữ liệu & container cũ
+Lệnh này sẽ xóa sạch các container cũ, mạng ảo và volume cơ sở dữ liệu `postgres_data` để làm lại từ đầu:
+```bash
+sudo docker compose down -v
+```
+
+*(Tùy chọn: Nếu bạn muốn dọn sạch bảng CSDL trong pgAdmin mà không xóa container, chạy lệnh SQL sau)*:
+```sql
+TRUNCATE TABLE messages, conversations, files, peers, dht_storage, node_identity, node_state, users CASCADE;
+```
+
+### Bước 3: Build và khởi động lại toàn bộ hệ thống
+```bash
+sudo docker compose up -d --build
+```
+
+### Bước 4: Kiểm tra trạng thái hệ thống
+Xem các container đang chạy:
+```bash
+sudo docker compose ps
+```
+*Kết quả phải thấy 7 container đều ở trạng thái `running` (Up), **không có bất kỳ peer-1, peer-2 tĩnh nào**.*
+
+Kiểm tra log của Manager:
+```bash
+sudo docker compose logs -f manager
+```
+*Khi thấy dòng sau là hệ thống đã sẵn sàng*:
+```
+✅ Đã đồng bộ Schema Database PostgreSQL thành công.
+🚀 Central Auth Gateway & Node Manager đang lắng nghe tại HTTP port: 4000
+🚀 Discovery Registry Server đang lắng nghe tại TCP port: 7000
+Chưa có tài khoản nào trong hệ thống. Đang chờ người dùng đăng ký...
 ```
 
 ---
 
-## 🐳 CÁCH 1: CHẠY BACKEND TRÊN DOCKER + FRONTEND TRÊN TERMINAL (KHUYẾN NGHỊ)
+## 💬 HƯỚNG DẪN TRẢI NGHIỆM TÍNH NĂNG
 
-Toàn bộ **Registry và 3 Peer Backend (Alice, Bob, Charlie)** được đóng gói chạy tự động trong Docker; **Frontend UI** chạy trực tiếp trên terminal của máy bạn.
+### 1. Đăng ký & Chat P2P thời gian thực
+1. **Mở trình duyệt 1**: Truy cập `http://localhost` (hoặc domain Cloudflare tunnel).
+2. Nhấp tab **Đăng ký tài khoản**:
+   - Tên đăng nhập: `minh`
+   - Tên hiển thị: `Minh`
+   - Mật khẩu: `Minh@123456` (phải có chữ hoa, thường, số, ký tự đặc biệt).
+   - Nhấn **Đăng ký** $\rightarrow$ Hệ thống tự động tạo Node 1 cho Minh (cổng UI 3001, TCP 8001).
+3. **Mở trình duyệt 2** (hoặc Cửa sổ ẩn danh / thiết bị khác):
+   - Đăng ký tài khoản thứ hai: `phu` / `Phu@123456`.
+   - Hệ thống tự động tạo Node 2 cho Phú (cổng UI 3002, TCP 8002) và tự bootstrap vào Node 1.
+4. **Nhắn tin trực tiếp**:
+   - Ở cả 2 màn hình, bạn sẽ thấy đối phương sáng đèn **Online (Chấm xanh)**.
+   - Bấm vào tên đối phương và gửi tin nhắn $\rightarrow$ Tin nhắn được truyền trực tiếp qua Socket TCP 1-chặng với độ trễ cực thấp.
 
-### Bước 1: Khởi động toàn bộ Backend trong Docker
-```bash
-docker compose up -d
-```
-Lệnh này sẽ tự động khởi động:
-- `p2p-registry` trên cổng `7000`
-- `p2p-peer-alice` trên TCP `8001`, WebSocket UI `3001`
-- `p2p-peer-bob` trên TCP `8002`, WebSocket UI `3002`
-- `p2p-peer-charlie` trên TCP `8003`, WebSocket UI `3003`
-*(Dữ liệu SQLite được đồng bộ ra thư mục `./data` trên máy bạn; file tải về nằm tại `./downloads`)*.
+### 2. Thử nghiệm Định tuyến Đa chặng Mesh Relay
+1. Đăng ký tài khoản thứ ba: `nam`.
+2. Trên màn hình của `minh`, mở Panel **Protocol Logs** ở cột bên phải, bấm nút **Mô phỏng Chặn Firewall tới Phú**.
+3. Gửi tin nhắn từ `minh` tới `phu` $\rightarrow$ Quan sát log sẽ thấy hệ thống tự động chuyển tiếp qua `nam`:
+   $$\text{Minh} \xrightarrow{\text{Chặng 1}} \text{Nam} \xrightarrow{\text{Chặng 2}} \text{Phú}$$
 
-### Bước 2: Khởi động React Frontend UI trên Terminal
-Mở một cửa sổ Terminal trên máy bạn:
-```bash
-cd ui
-npm run dev
-```
+### 3. Thử nghiệm Hộp thư ngoại tuyến (Distributed Mailbox)
+1. Tắt tab trình duyệt của `phu`.
+2. `minh` gửi một tin nhắn cho `phu` $\rightarrow$ Log hiển thị tin nhắn được cất vào **Distributed Mailbox trên DHT**.
+3. Mở lại tab và đăng nhập tài khoản `phu` $\rightarrow$ Node tự động rút tin nhắn offline về và hiển thị lên khung chat!
 
-### Bước 3: Mở trình duyệt trải nghiệm
-- **Alice**: [http://localhost:5173/?port=3001](http://localhost:5173/?port=3001)
-- **Bob**: [http://localhost:5173/?port=3002](http://localhost:5173/?port=3002)
-- **Charlie**: [http://localhost:5173/?port=3003](http://localhost:5173/?port=3003)
-
-Khi muốn dừng Docker:
-```bash
-docker compose down
-```
-
----
-
-## 💻 CÁCH 2: CHẠY THỦ CÔNG TRÊN TERMINAL (KHÔNG CẦN REGISTRY)
-
-### Khởi động các Peer Backend (Pure P2P DHT):
-Mở các cửa sổ Terminal riêng:
-
-```bash
-# Terminal Peer 1 (Alice - Seed Node khởi nguồn, tự trị không cần Registry):
-npx tsx peer/index.ts --name Alice --tcpPort 8001 --uiPort 3001 --mode dht
-
-# Terminal Peer 2 (Bob - Gia nhập mạng bootstrap qua Alice):
-npx tsx peer/index.ts --name Bob --tcpPort 8002 --uiPort 3002 --mode dht --bootstrap 127.0.0.1:8001
-
-# Terminal Peer 3 (Charlie - Gia nhập mạng CHỈ qua Bob, tự động tìm thấy Alice qua DHT):
-npx tsx peer/index.ts --name Charlie --tcpPort 8003 --uiPort 3003 --mode dht --bootstrap 127.0.0.1:8002
-```
-
-*(Lưu ý: Hệ thống vẫn hỗ trợ chế độ `--mode registry` truyền thống nếu bạn muốn chạy cùng Registry Server tập trung `npm run registry`)*.
-
-### Khởi động React UI
-```bash
-cd ui
-npm run dev
-```
-Mở trình duyệt:
-- Tab 1: `http://localhost:5173/?port=3001` (Giao diện của Alice)
-- Tab 2: `http://localhost:5173/?port=3002` (Giao diện của Bob)
-- Tab 3: `http://localhost:5173/?port=3003` (Giao diện của Charlie)
+### 4. Xem Dashboard Giám sát Grafana
+- Truy cập: `http://localhost:3000` (hoặc `http://<IP_Server>:3000`).
+- Đăng nhập: Tài khoản `admin` / Mật khẩu `admin`.
+- Mở Dashboard: **P2P Network Overview**:
+  - **Active Peers Count**: Hiển thị chính xác số Node P2P đang trực tuyến (khởi điểm từ 0 và tăng dần khi có người đăng ký).
+  - **Messages Sent/Received**: Biểu đồ số lượng tin nhắn trao đổi.
+  - **System Metrics**: Biểu đồ CPU, RAM, Event Loop của các container.
 
 ---
 
 ## 🧪 BỘ KIỂM THỬ TỰ ĐỘNG (AUTOMATED TEST SUITES)
 
-Dự án cung cấp bộ kịch bản kiểm thử toàn diện cho các tiên đề và giải thuật của Hệ thống Phân tán:
+Dự án cung cấp bộ kịch bản kiểm thử toàn diện các thuật toán phân tán:
 
 ```bash
-# 1. Kiểm thử Tính nhân quả & Đồng hồ Logic (Lamport Logical Clocks & Vector Clocks, Clock Skew immunity):
+# 1. Kiểm thử Thuật toán Kademlia DHT (XOR metric, K-buckets, LRU Eviction):
+npm run test:dht:unit
+
+# 2. Kiểm thử Tính nhân quả & Đồng hồ Logic (Lamport Logical Clocks & Vector Clocks):
 npm run test:causality
 
-# 2. Kiểm thử Định tuyến đa chặng Mesh Relay (Multi-hop Overlay, TTL, Loop Prevention):
+# 3. Kiểm thử Định tuyến đa chặng Mesh Relay (Multi-hop Overlay, TTL, Loop Prevention):
 npm run test:mesh
 
-# 3. Kiểm thử Bền vững dữ liệu DHT & Distributed Mailbox offline:
+# 4. Kiểm thử Bền vững dữ liệu DHT & Distributed Mailbox offline:
 npm run test:persistence
 
-# 4. Kiểm thử Xung đột định danh & Tự động hàn gắn phân mảnh mạng (Network Partition Healing):
+# 5. Kiểm thử Xung đột định danh & Tự động hàn gắn phân mảnh mạng (Network Partition Healing):
 npm run test:healing
 
-# 5. Kiểm thử đơn vị thuật toán Kademlia DHT (XOR metric, K-buckets, LRU Eviction):
-npm run test:dht:unit
+# 6. Kiểm thử Bộ ba tính năng Bảo mật (JWT + Chống Brute-force + Chính sách mật khẩu):
+npm run test:security
 ```
-
-
