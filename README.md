@@ -70,10 +70,13 @@ flowchart TD
 
 ## 🚀 HƯỚNG DẪN KHỞI ĐỘNG HỆ THỐNG TỪ ĐẦU (CLEAN START)
 
-### Bước 1: Kéo mã nguồn mới nhất
+### Bước 1: Kéo mã nguồn mới nhất & Cấu hình biến môi trường (`.env`)
 ```bash
 cd ~/secure-p2p-network
 git pull origin main
+
+# Tạo file .env từ file mẫu nếu chưa có (chỉnh sửa mật khẩu nếu cần)
+cp -n .env.example .env
 ```
 
 ### Bước 2: Dọn sạch toàn bộ dữ liệu & container cũ

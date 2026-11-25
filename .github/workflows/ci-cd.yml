@@ -1,0 +1,148 @@
+name: CI/CD Pipeline - Secure P2P Network
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BACKEND_IMAGE: secure-p2p-backend
+  UI_IMAGE: secure-p2p-ui
+
+jobs:
+  # ========================================================
+  # JOB 1: Kiểm tra mã nguồn, TypeScript & Chạy Test tự động
+  # ========================================================
+  ci-quality-and-tests:
+    name: Typecheck, Build UI & Automated Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: p2p_network
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Backend dependencies
+        run: npm ci
+
+      - name: Install Frontend UI dependencies
+        working-directory: ./ui
+        run: npm ci
+
+      - name: TypeScript Typecheck (Backend)
+        run: npx tsc --noEmit
+
+      - name: Build Frontend UI (Vite + TypeScript)
+        working-directory: ./ui
+        run: npm run build
+
+      - name: Run Kademlia DHT Unit Tests
+        run: npm run test:dht:unit
+
+      - name: Run Security Enhancements Tests (JWT, Brute-force, Password Policy)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_NAME: p2p_network
+          DB_USER: postgres
+          DB_PASSWORD: ci_test_password
+          JWT_SECRET: ci_test_jwt_secret_key_32_characters_long
+        run: npm run test:security
+
+  # ========================================================
+  # JOB 2: Build Docker Images & Push Docker Hub (nếu có Secret)
+  # ========================================================
+  build-and-push-docker:
+    name: Build Docker Images
+    needs: ci-quality-and-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+
+      - name: Build UI Docker Image (Nginx Multi-stage)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ui
+          file: ./ui/Dockerfile
+          push: false
+          load: true
+          tags: ${{ env.UI_IMAGE }}:${{ github.sha }}
+
+      - name: Push Images to Docker Hub (Optional)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin
+            docker tag ${{ env.BACKEND_IMAGE }}:${{ github.sha }} "$DH_USER/${{ env.BACKEND_IMAGE }}:latest"
+            docker tag ${{ env.BACKEND_IMAGE }}:${{ github.sha }} "$DH_USER/${{ env.BACKEND_IMAGE }}:${{ github.sha }}"
+            docker tag ${{ env.UI_IMAGE }}:${{ github.sha }} "$DH_USER/${{ env.UI_IMAGE }}:latest"
+            docker tag ${{ env.UI_IMAGE }}:${{ github.sha }} "$DH_USER/${{ env.UI_IMAGE }}:${{ github.sha }}"
+            docker push "$DH_USER/${{ env.BACKEND_IMAGE }}:latest"
+            docker push "$DH_USER/${{ env.BACKEND_IMAGE }}:${{ github.sha }}"
+            docker push "$DH_USER/${{ env.UI_IMAGE }}:latest"
+            docker push "$DH_USER/${{ env.UI_IMAGE }}:${{ github.sha }}"
+            echo "✅ Đã đẩy Docker Images lên Docker Hub thành công!"
+          else
+            echo "ℹ️ Chưa cấu hình DOCKERHUB_USERNAME / DOCKERHUB_TOKEN trong Secrets. Bỏ qua bước push."
+          fi
+
+  # ========================================================
+  # JOB 3: Continuous Deployment (CD) tới Server Ubuntu qua SSH
+  # Kích hoạt khi tạo Variable ENABLE_AUTO_DEPLOY=true trên GitHub
+  # ========================================================
+  cd-deploy-server:
+    name: Deploy to Production Server
+    needs: build-and-push-docker
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_AUTO_DEPLOY == 'true'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/secure-p2p-network
+            git pull origin main
+            sudo docker compose up -d --build
+            sudo docker image prune -f

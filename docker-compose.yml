@@ -4,13 +4,19 @@ services:
     container_name: p2p-postgres
     restart: always
     environment:
-      POSTGRES_DB: p2p_network
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 27082005
+      POSTGRES_DB: ${DB_NAME:-p2p_network}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_secret}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-p2p_network}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - p2p-net
 
@@ -19,20 +25,29 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: p2p-manager
+    restart: unless-stopped
     command: npm run manager
     environment:
-      - MANAGER_PORT=4000
-      - REGISTRY_PORT=7000
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=p2p_network
-      - DB_USER=postgres
-      - DB_PASSWORD=27082005
+      - MANAGER_PORT=${MANAGER_PORT:-4000}
+      - REGISTRY_PORT=${REGISTRY_PORT:-7000}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-p2p_network}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres_secret}
+      - JWT_SECRET=${JWT_SECRET:-p2p_dev_jwt_secret_change_in_prod}
     volumes:
       - ./downloads:/app/downloads
       - ./logs:/app/logs
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/status').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks:
       - p2p-net
 
@@ -41,11 +56,19 @@ services:
       context: ./ui
       dockerfile: Dockerfile
     container_name: p2p-ui
+    restart: unless-stopped
     ports:
       - "80:80"
       - "5173:80"
     depends_on:
-      - manager
+      manager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - p2p-net
 
@@ -66,6 +89,11 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
     ports:
       - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     networks:
       - p2p-net
 
@@ -74,8 +102,8 @@ services:
     container_name: p2p-grafana
     restart: always
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
@@ -85,7 +113,13 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     networks:
       - p2p-net
 
