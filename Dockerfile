@@ -17,16 +17,32 @@ COPY manager/ ./manager/
 RUN npm run build
 
 # =======================================================
-# Stage 2: Production runtime (non-root, chỉ giữ prod deps)
+# Stage 2: Cài production dependencies
+# =======================================================
+FROM node:22-alpine AS prod-deps
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# =======================================================
+# Stage 3: Production runtime tối giản (non-root, bỏ npm/yarn/corepack)
 # =======================================================
 FROM node:22-alpine AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
 
-COPY package*.json config.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Gỡ bỏ npm/npx/corepack/yarn không dùng ở runtime để thu gọn attack surface và loại bỏ CVE từ CLI
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx \
+           /usr/local/bin/corepack \
+           /opt/yarn*
 
+COPY package.json config.json ./
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 # Tạo thư mục downloads, logs và phân quyền cho user non-root 'node' (UID 1000)
@@ -37,4 +53,3 @@ USER node
 EXPOSE 4000 7000
 
 CMD ["node", "dist/manager/index.js"]
-
