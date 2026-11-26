@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Tận dụng cơ chế layer cache của Docker cho node_modules
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Sao chép toàn bộ mã nguồn Frontend và tiến hành biên dịch
 COPY . .

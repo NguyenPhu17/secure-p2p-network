@@ -6,16 +6,23 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
 env:
   BACKEND_IMAGE: secure-p2p-backend
   UI_IMAGE: secure-p2p-ui
 
 jobs:
   # ========================================================
-  # JOB 1: Kiểm tra mã nguồn, TypeScript & Chạy Test tự động
+  # JOB 1: Typecheck, Build, Compose Validate & Automated Tests
   # ========================================================
   ci-quality-and-tests:
-    name: Typecheck, Build UI & Automated Tests
+    name: Typecheck, Build & Automated Tests
     runs-on: ubuntu-latest
 
     services:
@@ -42,6 +49,9 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            ui/package-lock.json
 
       - name: Install Backend dependencies
         run: npm ci
@@ -50,12 +60,21 @@ jobs:
         working-directory: ./ui
         run: npm ci
 
-      - name: TypeScript Typecheck (Backend)
+      - name: TypeScript Typecheck (All Backend + Tests)
         run: npx tsc --noEmit
+
+      - name: Build Backend Production Bundle (dist/)
+        run: npm run build
 
       - name: Build Frontend UI (Vite + TypeScript)
         working-directory: ./ui
         run: npm run build
+
+      - name: Validate Docker Compose Configuration
+        env:
+          DB_PASSWORD: ci_validate_password
+          JWT_SECRET: ci_validate_jwt_secret_key_32_characters
+        run: docker compose config --quiet
 
       - name: Run Kademlia DHT Unit Tests
         run: npm run test:dht:unit
@@ -71,11 +90,41 @@ jobs:
         run: npm run test:security
 
   # ========================================================
-  # JOB 2: Build Docker Images & Push Docker Hub (nếu có Secret)
+  # JOB 2: DevSecOps - Secret Scanning & Dependency Audit
   # ========================================================
-  build-and-push-docker:
-    name: Build Docker Images
-    needs: ci-quality-and-tests
+  security-audit:
+    name: Secret Scan & Dependency Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for leaked secrets (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Audit Backend Production Dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Audit Frontend Dependencies
+        working-directory: ./ui
+        run: npm audit --omit=dev --audit-level=high
+
+  # ========================================================
+  # JOB 3: Build Docker Images, Trivy CVE Scan & Push Registry
+  # ========================================================
+  build-and-scan-docker:
+    name: Build, Scan & Push Docker Images
+    needs: [ci-quality-and-tests, security-audit]
     runs-on: ubuntu-latest
 
     steps:
@@ -93,6 +142,8 @@ jobs:
           push: false
           load: true
           tags: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
 
       - name: Build UI Docker Image (Nginx Multi-stage)
         uses: docker/build-push-action@v5
@@ -102,8 +153,28 @@ jobs:
           push: false
           load: true
           tags: ${{ env.UI_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,scope=ui,mode=max
 
-      - name: Push Images to Docker Hub (Optional)
+      - name: Scan Backend Image with Trivy (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Scan UI Image with Trivy (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.UI_IMAGE }}:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Push Images to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -125,24 +196,54 @@ jobs:
           fi
 
   # ========================================================
-  # JOB 3: Continuous Deployment (CD) tới Server Ubuntu qua SSH
-  # Kích hoạt khi tạo Variable ENABLE_AUTO_DEPLOY=true trên GitHub
+  # JOB 4: Continuous Deployment (Pull-based + Auto Rollback)
+  # Kích hoạt khi ENABLE_AUTO_DEPLOY=true và đã cấu hình SSH + Docker Hub Secrets
   # ========================================================
   cd-deploy-server:
     name: Deploy to Production Server
-    needs: build-and-push-docker
+    needs: build-and-scan-docker
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_AUTO_DEPLOY == 'true'
 
     steps:
-      - name: Deploy via SSH
+      - name: Pull-based Deploy & Health Verification via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          NEW_TAG: ${{ github.sha }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: DH_USER,DH_TOKEN,NEW_TAG
           script: |
+            set -euo pipefail
             cd ~/secure-p2p-network
-            git pull origin main
-            sudo docker compose up -d --build
-            sudo docker image prune -f
+            git pull --ff-only origin main
+
+            if [ -z "${DH_USER:-}" ]; then
+              echo "❌ Thiếu DOCKERHUB_USERNAME để deploy pull-based."
+              exit 1
+            fi
+
+            if [ -n "${DH_TOKEN:-}" ]; then
+              echo "${DH_TOKEN}" | docker login -u "${DH_USER}" --password-stdin
+            fi
+
+            export BACKEND_IMAGE="${DH_USER}/secure-p2p-backend"
+            export UI_IMAGE="${DH_USER}/secure-p2p-ui"
+            PREV_TAG=$(cat .deployed_tag 2>/dev/null || echo "latest")
+
+            export IMAGE_TAG="${NEW_TAG}"
+            docker compose pull manager ui
+
+            if ! docker compose up -d --no-build --wait; then
+              echo "⚠️ Deploy tag ${NEW_TAG} thất bại! Đang rollback về tag ${PREV_TAG}..."
+              export IMAGE_TAG="${PREV_TAG}"
+              docker compose up -d --no-build --wait || true
+              exit 1
+            fi
+
+            echo "${NEW_TAG}" > .deployed_tag
+            docker image prune -f

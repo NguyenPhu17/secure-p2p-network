@@ -1,0 +1,56 @@
+groups:
+  - name: p2p-infrastructure-and-app-alerts
+    rules:
+      - alert: P2PManagerDown
+        expr: up{job="p2p-manager"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "P2P Manager API không phản hồi"
+          description: "Target {{ $labels.instance }} (job p2p-manager) đã down quá 30 giây."
+
+      - alert: P2PPeerNodeDown
+        expr: up{job="p2p-peers"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Peer Node {{ $labels.instance }} mất kết nối metrics"
+          description: "Prometheus không scrape được /metrics từ {{ $labels.instance }} trong hơn 1 phút."
+
+      - alert: AuthBruteForceSpike
+        expr: sum(rate(p2p_auth_attempts_total{status=~"failed|locked"}[2m])) > 0.2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Phát hiện lưu lượng đăng nhập sai / khóa tài khoản bất thường"
+          description: "Tỷ lệ đăng nhập thất bại hoặc bị khóa vượt ngưỡng 0.2 req/s trong 2 phút gần nhất."
+
+      - alert: HostHighCpuUsage
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 85
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU máy chủ vượt quá 85%"
+          description: "Mức sử dụng CPU hiện tại đạt {{ printf \"%.1f\" $value }}% liên tục trong 2 phút."
+
+      - alert: HostHighMemoryUsage
+        expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 90
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "RAM máy chủ vượt quá 90%"
+          description: "Mức sử dụng RAM hiện tại đạt {{ printf \"%.1f\" $value }}%."
+
+      - alert: ContainerHighMemoryUsage
+        expr: (container_memory_usage_bytes{name=~"p2p-.*"} / container_spec_memory_limit_bytes{name=~"p2p-.*"}) > 0.85 and container_spec_memory_limit_bytes{name=~"p2p-.*"} > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} sắp chạm ngưỡng giới hạn RAM"
+          description: "Container {{ $labels.name }} đang dùng {{ $value | humanizePercentage }} giới hạn RAM được cấp."

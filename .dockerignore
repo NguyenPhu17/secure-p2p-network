@@ -6,5 +6,6 @@ tests
 downloads
 data/*.db*
 logs
+backups
 *.log
 

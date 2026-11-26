@@ -16,7 +16,7 @@
     "port": 5432,
     "database": "p2p_network",
     "user": "postgres",
-    "password": "27082005",
+    "password": "",
     "max": 10
   }
 }

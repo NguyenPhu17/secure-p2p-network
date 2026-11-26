@@ -10,6 +10,6 @@
     "outDir": "./dist",
     "rootDir": "./"
   },
-  "include": ["common/**/*", "registry/**/*", "peer/**/*", "tests/**/*"]
+  "include": ["common/**/*", "registry/**/*", "peer/**/*", "manager/**/*", "tests/**/*"]
 }
 

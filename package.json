@@ -4,6 +4,8 @@
   "description": "Thiet ke va hien thuc mang phan tan P2P dua tren Kademlia DHT va dinh tuyen Mesh Relay ket hop bao mat E2EE phi tap trung (Zero SPOF)",
   "type": "module",
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/manager/index.js",
     "registry": "tsx registry/index.ts",
     "manager": "tsx manager/index.ts",
     "peer": "tsx peer/index.ts",

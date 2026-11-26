@@ -16,9 +16,25 @@ export interface JwtPayload {
 }
 
 export class JwtService {
-  // Khóa bí mật HMAC ký token (Đọc từ ENV hoặc dùng khóa mặc định an toàn)
-  private static SECRET =
-    process.env.JWT_SECRET || "p2p_secure_network_jwt_secret_key_2026_super_safe_zero_spof";
+  private static readonly EPHEMERAL_DEV_SECRET = crypto.randomBytes(32).toString("hex");
+
+  /**
+   * Lấy khóa bí mật HMAC ký token từ biến môi trường.
+   * Ở môi trường production bắt buộc cấu hình JWT_SECRET (>= 32 ký tự).
+   */
+  private static getSecret(): string {
+    const secret = process.env.JWT_SECRET;
+    if (secret) {
+      if (process.env.NODE_ENV === "production" && secret.length < 32) {
+        throw new Error("JWT_SECRET phải có tối thiểu 32 ký tự ở môi trường production.");
+      }
+      return secret;
+    }
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("Thiếu biến môi trường JWT_SECRET ở môi trường production.");
+    }
+    return this.EPHEMERAL_DEV_SECRET;
+  }
 
   /**
    * Ký và tạo chuỗi JWT Token có thời hạn
@@ -38,7 +54,7 @@ export class JwtService {
     const encodedPayload = Buffer.from(JSON.stringify(fullPayload)).toString("base64url");
 
     const dataToSign = `${encodedHeader}.${encodedPayload}`;
-    const signature = crypto.createHmac("sha256", this.SECRET).update(dataToSign).digest("base64url");
+    const signature = crypto.createHmac("sha256", this.getSecret()).update(dataToSign).digest("base64url");
 
     return `${dataToSign}.${signature}`;
   }
@@ -58,7 +74,7 @@ export class JwtService {
 
     const [encodedHeader, encodedPayload, signature] = parts;
     const dataToSign = `${encodedHeader}.${encodedPayload}`;
-    const expectedSignature = crypto.createHmac("sha256", this.SECRET).update(dataToSign).digest("base64url");
+    const expectedSignature = crypto.createHmac("sha256", this.getSecret()).update(dataToSign).digest("base64url");
 
     // So sánh chữ ký an toàn chống Timing Attack
     const sigBuf = Buffer.from(signature);

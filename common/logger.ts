@@ -22,7 +22,11 @@ export interface LogEntry {
 
 export class Logger {
   private logFilePath: string | null = null;
-  private logStream: fs.WriteStream | null = null;
+  private logFd: number | null = null;
+  private maxFileSizeBytes = 10 * 1024 * 1024;
+  private maxRotatedFiles = 3;
+  private currentFileSizeBytes = 0;
+  private isRotating = false;
   private ringBuffer: LogEntry[] = [];
   private maxEntries: number;
   private listeners: ((entry: LogEntry) => void)[] = [];
@@ -32,14 +36,69 @@ export class Logger {
   }
 
   /**
-   * Kích hoạt ghi log ra file đĩa
+   * Kích hoạt ghi log ra file đĩa kèm xoay vòng theo dung lượng (mặc định 10MB x 3 file)
    */
-  public enableFileLogging(logDir = "logs"): void {
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
+  public enableFileLogging(
+    logDir = "logs",
+    maxFileSizeBytes = 10 * 1024 * 1024,
+    maxRotatedFiles = 3
+  ): void {
+    try {
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+      }
+      this.maxFileSizeBytes = maxFileSizeBytes;
+      this.maxRotatedFiles = maxRotatedFiles;
+      this.logFilePath = path.join(logDir, `${this.contextName}.log`);
+      this.openLogStream();
+    } catch (err: any) {
+      console.error(`[${this.contextName}] File logging disabled: ${err.message}`);
+      this.logFd = null;
     }
-    this.logFilePath = path.join(logDir, `${this.contextName}.log`);
-    this.logStream = fs.createWriteStream(this.logFilePath, { flags: "a" });
+  }
+
+  private openLogStream(): void {
+    if (!this.logFilePath) return;
+    try {
+      this.logFd = fs.openSync(this.logFilePath, "a");
+      this.currentFileSizeBytes = fs.fstatSync(this.logFd).size;
+    } catch (err: any) {
+      console.error(`[${this.contextName}] File logging disabled due to open error: ${err.message}`);
+      this.logFd = null;
+      this.currentFileSizeBytes = 0;
+    }
+  }
+
+  private closeLogFd(): void {
+    if (this.logFd !== null) {
+      try {
+        fs.closeSync(this.logFd);
+      } catch {}
+      this.logFd = null;
+    }
+  }
+
+  private rotateLogFile(): void {
+    if (!this.logFilePath || this.isRotating) return;
+    this.isRotating = true;
+    try {
+      this.closeLogFd();
+      for (let i = this.maxRotatedFiles - 1; i >= 1; i--) {
+        const src = `${this.logFilePath}.${i}`;
+        const dest = `${this.logFilePath}.${i + 1}`;
+        if (fs.existsSync(src)) {
+          fs.renameSync(src, dest);
+        }
+      }
+      if (fs.existsSync(this.logFilePath)) {
+        fs.renameSync(this.logFilePath, `${this.logFilePath}.1`);
+      }
+      this.openLogStream();
+    } catch (err: any) {
+      console.error(`[${this.contextName}] Failed to rotate log file: ${err.message}`);
+    } finally {
+      this.isRotating = false;
+    }
   }
 
   /**
@@ -97,9 +156,19 @@ export class Logger {
       `[${entry.timeStr}] [${this.contextName}] [${entry.level}] [${entry.category}] ${dirTag}${typeTag}${peerTag} ${entry.summary}`
     );
 
-    // 3. Ghi ra stream file nếu kích hoạt
-    if (this.logStream) {
-      this.logStream.write(JSON.stringify(entry) + "\n");
+    // 3. Ghi ra file nếu kích hoạt (kèm xoay vòng khi vượt quá ngưỡng)
+    if (this.logFd !== null) {
+      try {
+        const line = JSON.stringify(entry) + "\n";
+        const bytes = fs.writeSync(this.logFd, line, null, "utf8");
+        this.currentFileSizeBytes += bytes;
+        if (this.currentFileSizeBytes >= this.maxFileSizeBytes) {
+          this.rotateLogFile();
+        }
+      } catch (err: any) {
+        console.error(`[${this.contextName}] File logging write error: ${err.message}`);
+        this.closeLogFd();
+      }
     }
 
     // 4. Phát sự kiện cho listeners (WebSocket bridge)
@@ -131,10 +200,7 @@ export class Logger {
   }
 
   public close(): void {
-    if (this.logStream) {
-      this.logStream.end();
-      this.logStream = null;
-    }
+    this.closeLogFd();
     this.ringBuffer = [];
     this.listeners = [];
   }

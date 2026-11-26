@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -6,11 +12,14 @@ services:
     environment:
       POSTGRES_DB: ${DB_NAME:-p2p_network}
       POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_secret}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required in .env}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    mem_limit: 512m
+    cpus: 1.0
+    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-p2p_network}"]
       interval: 5s
@@ -21,24 +30,28 @@ services:
       - p2p-net
 
   manager:
+    image: ${BACKEND_IMAGE:-secure-p2p-network-manager}:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
     container_name: p2p-manager
     restart: unless-stopped
-    command: npm run manager
     environment:
+      - NODE_ENV=${NODE_ENV:-production}
       - MANAGER_PORT=${MANAGER_PORT:-4000}
       - REGISTRY_PORT=${REGISTRY_PORT:-7000}
       - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-p2p_network}
       - DB_USER=${DB_USER:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD:-postgres_secret}
-      - JWT_SECRET=${JWT_SECRET:-p2p_dev_jwt_secret_change_in_prod}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required in .env}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required in .env}
     volumes:
       - ./downloads:/app/downloads
       - ./logs:/app/logs
+    mem_limit: 1024m
+    cpus: 1.5
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,6 +65,7 @@ services:
       - p2p-net
 
   ui:
+    image: ${UI_IMAGE:-secure-p2p-network-ui}:${IMAGE_TAG:-latest}
     build:
       context: ./ui
       dockerfile: Dockerfile
@@ -60,6 +74,9 @@ services:
     ports:
       - "80:80"
       - "5173:80"
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *default-logging
     depends_on:
       manager:
         condition: service_healthy
@@ -81,14 +98,20 @@ services:
     restart: always
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--storage.tsdb.retention.size=1GB'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
+    mem_limit: 512m
+    cpus: 0.5
+    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy >/dev/null || exit 1"]
       interval: 15s
@@ -111,7 +134,10 @@ services:
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+    mem_limit: 512m
+    cpus: 0.5
+    logging: *default-logging
     depends_on:
       prometheus:
         condition: service_healthy
@@ -137,7 +163,10 @@ services:
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
+    mem_limit: 128m
+    cpus: 0.25
+    logging: *default-logging
     networks:
       - p2p-net
 
@@ -155,7 +184,10 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
     ports:
-      - "8088:8080"
+      - "127.0.0.1:8088:8080"
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *default-logging
     networks:
       - p2p-net
 

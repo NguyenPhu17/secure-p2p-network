@@ -5,8 +5,11 @@
 
 import http from "node:http";
 import net from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn, ChildProcess } from "node:child_process";
 import { Pool } from "pg";
+import client from "prom-client";
 import { Logger } from "../common/logger.js";
 import { initDatabase } from "../peer/db/migrations.js";
 import { UserService } from "../peer/db/user-service.js";
@@ -18,12 +21,35 @@ import { BaseMessage, MessageType } from "../common/protocol.js";
 const logger = new Logger("Manager", 500);
 logger.enableFileLogging();
 
+// Prometheus Metrics cho Manager & Service Discovery
+const managerMetricsRegistry = new client.Registry();
+client.collectDefaultMetrics({
+  register: managerMetricsRegistry,
+  prefix: "p2p_manager_"
+});
+
+const managedActiveNodesGauge = new client.Gauge({
+  name: "p2p_managed_active_nodes",
+  help: "Số lượng Peer Node đang được Manager điều phối",
+  registers: [managerMetricsRegistry]
+});
+
+const authAttemptsCounter = new client.Counter({
+  name: "p2p_auth_attempts_total",
+  help: "Tổng số lượt đăng ký/đăng nhập qua Central Auth Gateway",
+  labelNames: ["action", "status"],
+  registers: [managerMetricsRegistry]
+});
+
 // Cấu hình Database từ biến môi trường
 const dbHost = process.env.DB_HOST || "postgres";
 const dbPort = parseInt(process.env.DB_PORT || "5432", 10);
 const dbName = process.env.DB_NAME || "p2p_network";
 const dbUser = process.env.DB_USER || "postgres";
-const dbPassword = process.env.DB_PASSWORD || "27082005";
+const dbPassword = process.env.DB_PASSWORD;
+if (!dbPassword) {
+  throw new Error("Thiếu biến môi trường DB_PASSWORD. Vui lòng cấu hình trong .env hoặc môi trường.");
+}
 
 const pool = new Pool({
   host: dbHost,
@@ -78,9 +104,13 @@ function spawnPeerNode(username: string, displayName: string, nodePort: number):
     logger.info("SYSTEM", `   Node đầu tiên trong mạng (Seed Node)`);
   }
 
-  const args = [
-    "tsx",
-    "peer/index.ts",
+  const currentFile = fileURLToPath(import.meta.url);
+  const isCompiled = currentFile.endsWith(".js");
+  const peerEntry = isCompiled
+    ? path.resolve(path.dirname(currentFile), "../peer/index.js")
+    : "peer/index.ts";
+
+  const peerArgs = [
     "--name", cleanUsername,
     "--tcpPort", String(tcpPort),
     "--uiPort", String(uiPort),
@@ -88,10 +118,13 @@ function spawnPeerNode(username: string, displayName: string, nodePort: number):
     "--ip", "127.0.0.1"
   ];
   if (bootstrapPeers.length > 0) {
-    args.push("--bootstrap", bootstrapPeers.join(","));
+    peerArgs.push("--bootstrap", bootstrapPeers.join(","));
   }
 
-  const child = spawn("npx", args, {
+  const command = isCompiled ? process.execPath : "npx";
+  const args = isCompiled ? [peerEntry, ...peerArgs] : ["tsx", peerEntry, ...peerArgs];
+
+  const child = spawn(command, args, {
     env: {
       ...process.env,
       PEER_NAME: cleanUsername,
@@ -178,6 +211,7 @@ const httpServer = http.createServer(async (req, res) => {
       try {
         const { username, password, displayName, nodePort } = JSON.parse(body || "{}");
         const authRes = await userService.register(username, password, displayName, nodePort);
+        authAttemptsCounter.inc({ action: "register", status: authRes.success ? "success" : "failed" });
         if (authRes.success && authRes.user) {
           // Tự động khởi động Peer Node cho người dùng mới
           spawnPeerNode(authRes.user.username, authRes.user.displayName, authRes.user.nodePort);
@@ -202,6 +236,8 @@ const httpServer = http.createServer(async (req, res) => {
       try {
         const { username, password } = JSON.parse(body || "{}");
         const authRes = await userService.login(username, password);
+        const loginStatus = authRes.success ? "success" : authRes.lockedMinutes ? "locked" : "failed";
+        authAttemptsCounter.inc({ action: "login", status: loginStatus });
         if (authRes.success && authRes.user) {
           // Nếu Node chưa chạy (ví dụ vừa khởi động lại hệ thống), tự động bật lại
           spawnPeerNode(authRes.user.username, authRes.user.displayName, authRes.user.nodePort);
@@ -245,7 +281,31 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
-  // 5. Trạng thái hệ thống & Danh sách Node đang chạy
+  // 5. Prometheus Metrics của Manager
+  if (req.method === "GET" && pathname === "/metrics") {
+    try {
+      managedActiveNodesGauge.set(activeNodes.size);
+      const metricsText = await managerMetricsRegistry.metrics();
+      res.writeHead(200, { "Content-Type": managerMetricsRegistry.contentType });
+      res.end(metricsText);
+    } catch (err: any) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end(`# Metrics error: ${err.message}\n`);
+    }
+    return;
+  }
+
+  // 6. Prometheus HTTP Service Discovery (tự động cấp danh sách Peer Node đang chạy)
+  if (req.method === "GET" && pathname === "/api/prometheus/targets") {
+    const targetHost = process.env.PROMETHEUS_TARGET_HOST || "manager";
+    const targets = Array.from(activeNodes.values()).map((n) => `${targetHost}:${n.uiPort}`);
+    const payload = targets.length > 0 ? [{ targets, labels: { service: "peer-node" } }] : [];
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(payload));
+    return;
+  }
+
+  // 7. Trạng thái hệ thống & Danh sách Node đang chạy
   if (req.method === "GET" && (pathname === "/api/status" || pathname === "/")) {
     const nodesList = Array.from(activeNodes.values()).map((n) => ({
       username: n.username,
