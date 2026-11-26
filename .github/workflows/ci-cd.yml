@@ -72,8 +72,8 @@ jobs:
 
       - name: Validate Docker Compose Configuration
         env:
-          DB_PASSWORD: ci_validate_password
-          JWT_SECRET: ci_validate_jwt_secret_key_32_characters
+          DB_PASSWORD: ci_validate_only
+          JWT_SECRET: ci_validate_only
         run: docker compose config --quiet
 
       - name: Run Kademlia DHT Unit Tests
@@ -86,8 +86,9 @@ jobs:
           DB_NAME: p2p_network
           DB_USER: postgres
           DB_PASSWORD: ci_test_password
-          JWT_SECRET: ci_test_jwt_secret_key_32_characters_long
-        run: npm run test:security
+        run: |
+          export JWT_SECRET="$(openssl rand -hex 32)"
+          npm run test:security
 
   # ========================================================
   # JOB 2: DevSecOps - Secret Scanning & Dependency Audit

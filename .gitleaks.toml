@@ -1,0 +1,14 @@
+title = "Gitleaks Config - Secure P2P Network"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow explicit CI/example placeholder strings only in CI pipelines and .env.example"
+condition = "AND"
+paths = [
+  '''(^|/)(Jenkinsfile|\.github/workflows/.*\.yml|\.env\.example)$'''
+]
+regexes = [
+  '''^(ci_test_|ci_validate_|change_this_).*'''
+]

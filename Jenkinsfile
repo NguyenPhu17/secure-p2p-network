@@ -35,7 +35,7 @@ pipeline {
                 sh 'npx tsc --noEmit'
                 sh 'npm run build'
                 sh 'cd ui && npm run build'
-                sh 'DB_PASSWORD=ci_validate_password JWT_SECRET=ci_validate_jwt_secret_key_32_characters docker compose config --quiet'
+                sh 'DB_PASSWORD=ci_validate_only JWT_SECRET=ci_validate_only docker compose config --quiet'
             }
         }
 
@@ -86,13 +86,17 @@ pipeline {
                         ).trim()
                         pgPort = '5432'
                     }
+                    def ciJwtSecret = sh(
+                        script: "node -e \"process.stdout.write(require('crypto').randomBytes(32).toString('hex'))\"",
+                        returnStdout: true
+                    ).trim()
                     withEnv([
                         "DB_HOST=${pgHost}",
                         "DB_PORT=${pgPort}",
                         "DB_NAME=p2p_network",
                         "DB_USER=postgres",
                         "DB_PASSWORD=ci_test_password",
-                        "JWT_SECRET=ci_test_jwt_secret_key_32_characters_long"
+                        "JWT_SECRET=${ciJwtSecret}"
                     ]) {
                         sh 'npm run test:security'
                     }
