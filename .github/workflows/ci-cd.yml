@@ -197,14 +197,68 @@ jobs:
           fi
 
   # ========================================================
-  # JOB 4: Continuous Deployment (Pull-based + Auto Rollback)
-  # Kích hoạt khi ENABLE_AUTO_DEPLOY=true và đã cấu hình SSH + Docker Hub Secrets
+  # JOB 4A: Continuous Deployment qua Self-hosted Runner (Phương án A - máy Ubuntu local)
+  # Kích hoạt khi ENABLE_AUTO_DEPLOY=true (và DEPLOY_TARGET không phải 'ssh')
+  # ========================================================
+  cd-deploy-self-hosted:
+    name: Deploy via Self-hosted Runner
+    needs: build-and-scan-docker
+    runs-on: self-hosted
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_AUTO_DEPLOY == 'true' && vars.DEPLOY_TARGET != 'ssh'
+
+    steps:
+      - name: Pull-based Deploy & Health Verification on Ubuntu Host
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          NEW_TAG: ${{ github.sha }}
+          DEPLOY_PATH_VAR: ${{ vars.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+          if ! docker info >/dev/null 2>&1 && [ -S "$HOME/.docker/desktop/docker.sock" ]; then
+            export DOCKER_HOST="unix://$HOME/.docker/desktop/docker.sock"
+          fi
+
+          DEPLOY_DIR="${DEPLOY_PATH_VAR:-/home/minh/project/p2p/secure-p2p-network}"
+          cd "$DEPLOY_DIR"
+          git pull --ff-only origin main
+
+          if [ -z "${DH_USER:-}" ]; then
+            echo "❌ Thiếu DOCKERHUB_USERNAME trong GitHub Secrets."
+            exit 1
+          fi
+
+          if [ -n "${DH_TOKEN:-}" ]; then
+            echo "${DH_TOKEN}" | docker login -u "${DH_USER}" --password-stdin
+          fi
+
+          export BACKEND_IMAGE="${DH_USER}/secure-p2p-backend"
+          export UI_IMAGE="${DH_USER}/secure-p2p-ui"
+          PREV_TAG=$(cat .deployed_tag 2>/dev/null || echo "latest")
+
+          export IMAGE_TAG="${NEW_TAG}"
+          docker compose pull manager ui
+
+          if ! docker compose up -d --no-build --wait; then
+            echo "⚠️ Deploy tag ${NEW_TAG} thất bại! Đang rollback về tag ${PREV_TAG}..."
+            export IMAGE_TAG="${PREV_TAG}"
+            docker compose up -d --no-build --wait || true
+            exit 1
+          fi
+
+          echo "${NEW_TAG}" > .deployed_tag
+          docker image prune -f
+
+  # ========================================================
+  # JOB 4B: Continuous Deployment tới VPS Ubuntu qua SSH (Phương án B)
+  # Kích hoạt khi ENABLE_AUTO_DEPLOY=true và DEPLOY_TARGET=ssh
   # ========================================================
   cd-deploy-server:
-    name: Deploy to Production Server
+    name: Deploy to Production Server (SSH)
     needs: build-and-scan-docker
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_AUTO_DEPLOY == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ENABLE_AUTO_DEPLOY == 'true' && vars.DEPLOY_TARGET == 'ssh'
 
     steps:
       - name: Pull-based Deploy & Health Verification via SSH

@@ -20,6 +20,7 @@ tests/temp*/
 # Environment & IDE
 .env
 .env.local
+.deployed_tag
 .vscode/
 .idea/
 *.suo
