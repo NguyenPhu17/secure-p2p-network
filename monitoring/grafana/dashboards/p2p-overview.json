@@ -11,25 +11,84 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 100,
-      "title": "⚡ P2P APPLICATION METRICS (Lớp Mạng Ngang Hàng)",
+      "title": "🛡️ SERVICE HEALTH, AVAILABILITY & SECURITY (SRE Golden Signals)",
       "type": "row"
+    },
+    {
+      "id": 101,
+      "title": "Firing Alerts",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 102,
+      "title": "Monitored Targets Up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(up == 1) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        }
+      }
     },
     {
       "id": 1,
       "title": "Active Peers Count",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "count(up{job=\"p2p-peers\"} == 1) or count(p2p_active_peers_count)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "p2p_managed_active_nodes or count(up{job=\"p2p-peers\"} == 1) or vector(0)",
           "refId": "A"
         }
       ],
@@ -42,7 +101,6 @@
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -56,20 +114,112 @@
       }
     },
     {
+      "id": 103,
+      "title": "Auth Success",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(p2p_auth_attempts_total{status=\"success\"}) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 104,
+      "title": "Auth Failed / Locked",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(p2p_auth_attempts_total{status=~\"failed|locked\"}) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 105,
+      "title": "Max Event Loop Lag (P99)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max({__name__=~\"p2p_(manager|system)_nodejs_eventloop_lag_p99_seconds\"}) * 1000 or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          },
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 110,
+      "title": "⚡ P2P APPLICATION & DISTRIBUTED ALGORITHMS",
+      "type": "row"
+    },
+    {
       "id": 2,
       "title": "Total P2P Messages",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(p2p_messages_total) or vector(0)",
           "refId": "A"
         }
@@ -90,17 +240,11 @@
       "id": 3,
       "title": "Mesh Relayed Packets",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(p2p_mesh_relays_total) or vector(0)",
           "refId": "A"
         }
@@ -121,17 +265,11 @@
       "id": 4,
       "title": "DHT Stored Keys",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum(p2p_dht_stored_keys_count) or vector(0)",
           "refId": "A"
         }
@@ -152,17 +290,11 @@
       "id": 5,
       "title": "Lamport Logical Clock per Peer Node",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "p2p_lamport_clock_value",
           "legendFormat": "{{node}}",
           "refId": "A"
@@ -182,29 +314,29 @@
     },
     {
       "id": 6,
-      "title": "P2P Message Traffic (Rate / sec)",
+      "title": "P2P Message & Auth Traffic (Rate / sec)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(p2p_messages_total[30s])",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (node, direction) (rate(p2p_messages_total[1m])) or vector(0)",
           "legendFormat": "{{node}} ({{direction}})",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (status) (rate(p2p_auth_attempts_total[1m]))",
+          "legendFormat": "auth ({{status}})",
+          "refId": "B"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 1
+            "drawStyle": "line",
+            "lineWidth": 2
           },
           "unit": "reqps"
         }
@@ -212,56 +344,68 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
       "id": 200,
-      "title": "🐳 DOCKER & SYSTEM INFRASTRUCTURE (cAdvisor & Node Exporter)",
+      "title": "🐳 PROCESS, CONTAINER & NODE.JS RUNTIME SATURATION",
       "type": "row"
     },
     {
       "id": 7,
-      "title": "Docker Container Memory Usage (RAM MB)",
+      "title": "Manager, Peer & Container Memory Usage (RSS)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "(container_memory_usage_bytes{name=~\"p2p-.*\"} or container_memory_usage_bytes{container_label_com_docker_compose_service=~\"peer-.*\"}) / (1024 * 1024)",
-          "legendFormat": "{{name}}",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "p2p_manager_process_resident_memory_bytes",
+          "legendFormat": "p2p-manager",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "p2p_system_process_resident_memory_bytes",
+          "legendFormat": "peer ({{instance}})",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "container_memory_working_set_bytes{name=~\"p2p-.*\"}",
+          "legendFormat": "container {{name}}",
+          "refId": "C"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": { "drawStyle": "line", "lineWidth": 2 },
-          "unit": "decbytes"
+          "unit": "bytes"
         }
       }
     },
     {
       "id": 8,
-      "title": "Docker Container CPU Usage (%)",
+      "title": "Manager, Peer & Container CPU Usage (%)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(container_cpu_usage_seconds_total{name=~\"p2p-.*\"}[30s]) * 100 or rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\"peer-.*\"}[30s]) * 100",
-          "legendFormat": "{{name}}",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(p2p_manager_process_cpu_seconds_total[1m]) * 100",
+          "legendFormat": "p2p-manager",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(p2p_system_process_cpu_seconds_total[1m]) * 100",
+          "legendFormat": "peer ({{instance}})",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\"p2p-.*\"}[1m]) * 100",
+          "legendFormat": "container {{name}}",
+          "refId": "C"
         }
       ],
       "fieldConfig": {
@@ -272,21 +416,76 @@
       }
     },
     {
-      "id": 9,
-      "title": "Ubuntu Server Host CPU Load (%)",
-      "type": "gauge",
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "id": 201,
+      "title": "Node.js Event Loop Lag P99",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[30s])) * 100)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "p2p_manager_nodejs_eventloop_lag_p99_seconds",
+          "legendFormat": "p2p-manager",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "p2p_system_nodejs_eventloop_lag_p99_seconds",
+          "legendFormat": "peer ({{instance}})",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2 },
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "id": 202,
+      "title": "Node.js Heap Memory Used",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "p2p_manager_nodejs_heap_size_used_bytes",
+          "legendFormat": "p2p-manager",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "p2p_system_nodejs_heap_size_used_bytes",
+          "legendFormat": "peer ({{instance}})",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2 },
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "id": 300,
+      "title": "🖥️ UBUNTU HOST INFRASTRUCTURE (CPU, RAM, DISK & NETWORK)",
+      "type": "row"
+    },
+    {
+      "id": 9,
+      "title": "Host CPU Load (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)",
           "refId": "A"
         }
       ],
@@ -308,19 +507,13 @@
     },
     {
       "id": 10,
-      "title": "Ubuntu Server Host RAM Usage (%)",
+      "title": "Host RAM Usage (%)",
       "type": "gauge",
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
           "refId": "A"
         }
@@ -340,16 +533,72 @@
           "unit": "percent"
         }
       }
+    },
+    {
+      "id": 301,
+      "title": "Host Root Disk Usage (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(100 * (1 - (node_filesystem_avail_bytes{mountpoint=~\"/|/rootfs\",fstype!~\"tmpfs|squashfs|overlay|nsfs\"} / node_filesystem_size_bytes{mountpoint=~\"/|/rootfs\",fstype!~\"tmpfs|squashfs|overlay|nsfs\"}))) or max(100 * (1 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent"
+        }
+      }
+    },
+    {
+      "id": 302,
+      "title": "Host Network I/O (RX / TX)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(node_network_receive_bytes_total{device!=\"lo\"}[1m]))",
+          "legendFormat": "RX (In)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(node_network_transmit_bytes_total{device!=\"lo\"}[1m]))",
+          "legendFormat": "TX (Out)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2 },
+          "unit": "Bps"
+        }
+      }
     }
   ],
   "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["p2p", "devops", "monitoring"],
+  "tags": ["p2p", "devops", "monitoring", "sre"],
   "time": { "from": "now-15m", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "P2P Network Production Dashboard",
   "uid": "p2p-production-dashboard",
-  "version": 2
+  "version": 3
 }
