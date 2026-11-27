@@ -719,7 +719,7 @@ export class PeerController {
           "ROUTING",
           `🔀 [MESH RELAY] Đã định tuyến gói tin [${message.type}] qua Peer trung gian '${relay.displayName}' (Tuyến: ${routePath.join(" ➔ ")})`,
           { relaySessionId, route: routePath },
-          { direction: "OUT", messageType: "RELAY_FORWARD", peer: relay.displayName }
+          { direction: "OUT", messageType: "RELAY_FORWARD", peer: relay.displayName, traceId: message.message_id, actor: this.displayName }
         );
         return {
           success: true,
@@ -766,7 +766,7 @@ export class PeerController {
         "ROUTING",
         `🎯 [RELAY REACHED] Đã nhận gói tin [${innerMessage.type}] từ '${originSender}' qua tuyến Mesh Relay: [${fullRoute.join(" ➔ ")}] (Tổng số chặng: ${hopCount})`,
         { relaySessionId, fullRoute, innerType: innerMessage.type },
-        { direction: "IN", messageType: "RELAY_FORWARD", peer: originSender }
+        { direction: "IN", messageType: "RELAY_FORWARD", peer: originSender, traceId: innerMessage.message_id, actor: this.displayName }
       );
 
       // Cập nhật reverse route cache để khi gửi lại ACK hoặc reply ta ưu tiên đi qua relay này
@@ -804,7 +804,7 @@ export class PeerController {
       "ROUTING",
       `🔄 [RELAY FORWARD] Node '${this.displayName}' đóng vai trò ROUTER CHUYỂN TIẾP: Chuyển gói tin từ '${originSender}' ➔ '${finalReceiver}' (Chặng ${hopCount + 1}/${maxHops})`,
       { relaySessionId, currentRoute: [...route, this.displayName] },
-      { direction: "INTERNAL", messageType: "RELAY_FORWARD", peer: finalReceiver }
+      { direction: "INTERNAL", messageType: "RELAY_FORWARD", peer: finalReceiver, traceId: innerMessage.message_id, actor: this.displayName }
     );
 
     const updatedRoute = [...route, this.displayName];
@@ -950,7 +950,7 @@ export class PeerController {
       "PROTOCOL",
       `Nhận [${msg.type}] từ peer '${msg.sender}' (seq: ${msg.seq}, Lamport: L${msg.lamport_clock ?? 0})${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}`,
       msg.payload,
-      { direction: "IN", messageType: msg.type, peer: msg.sender }
+      { direction: "IN", messageType: msg.type, peer: msg.sender, traceId: msg.message_id, actor: this.displayName }
     );
 
     switch (msg.type) {
@@ -1001,7 +1001,9 @@ export class PeerController {
         await this.store.updateMessageStatus(payload.ack_message_id, "delivered", viaRoute, relayedBy);
         this.logger.info(
           "PROTOCOL",
-          `Tin nhắn ${payload.ack_message_id} đã được ACK (delivered)${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}.`
+          `Tin nhắn ${payload.ack_message_id} đã được ACK (delivered)${relayedBy ? ` [qua Relay: ${relayedBy}]` : ""}.`,
+          undefined,
+          { direction: "IN", messageType: MessageType.CHAT_ACK, peer: msg.sender, traceId: payload.ack_message_id, actor: this.displayName }
         );
         this.emitUI("MESSAGE_STATUS_UPDATE", {
           message_id: payload.ack_message_id,
@@ -1146,6 +1148,12 @@ export class PeerController {
 
     // 1. Lưu tin nhắn vào DB với trạng thái ban đầu là "pending"
     await this.store.saveMessage(record);
+    this.logger.info(
+      "PROTOCOL",
+      `Chuẩn bị gửi [${MessageType.CHAT}] tới peer '${receiver}' (seq: ${seq}, Lamport: L${clock})`,
+      { message_id, receiver, seq, lamport_clock: clock },
+      { direction: "OUT", messageType: MessageType.CHAT, peer: receiver, traceId: message_id, actor: this.displayName }
+    );
     this.emitUI("NEW_MESSAGE", record);
     MetricsCollector.getInstance().messagesCounter.inc({ node: this.displayName, direction: "out", type: "chat" });
 
@@ -1165,7 +1173,9 @@ export class PeerController {
     if (!isOnline && !this.simulatedBlockedPeers.has(record.receiver)) {
       this.logger.warn(
         "PROTOCOL",
-        `Peer '${record.receiver}' hiện đang offline. Đang gửi tin nhắn ${record.message_id} vào Distributed Mailbox trên DHT...`
+        `Peer '${record.receiver}' hiện đang offline. Đang gửi tin nhắn ${record.message_id} vào Distributed Mailbox trên DHT...`,
+        undefined,
+        { direction: "OUT", messageType: "DHT_STORE", peer: record.receiver, traceId: record.message_id, actor: this.displayName }
       );
       await this.depositToDistributedMailbox(record);
       return false;
@@ -1201,7 +1211,9 @@ export class PeerController {
     } else {
       this.logger.warn(
         "ROUTING",
-        `Không thể chuyển phát tin nhắn ${record.message_id} tới '${record.receiver}' (cả Direct và Relay đều thất bại). Đang lưu vào Distributed Mailbox trên DHT...`
+        `Không thể chuyển phát tin nhắn ${record.message_id} tới '${record.receiver}' (cả Direct và Relay đều thất bại). Đang lưu vào Distributed Mailbox trên DHT...`,
+        undefined,
+        { direction: "INTERNAL", messageType: "DHT_STORE", peer: record.receiver, traceId: record.message_id, actor: this.displayName }
       );
       // Đưa tin nhắn offline vào Distributed Mailbox trên DHT
       await this.depositToDistributedMailbox(record);

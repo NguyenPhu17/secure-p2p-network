@@ -5,6 +5,7 @@
 
 import http from "node:http";
 import net from "node:net";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, ChildProcess } from "node:child_process";
@@ -189,10 +190,22 @@ async function autoRestoreExistingNodes(): Promise<void> {
 const httpPort = parseInt(process.env.MANAGER_PORT || "4000", 10);
 
 const httpServer = http.createServer(async (req, res) => {
-  // Cấu hình CORS
+  const reqStartedAt = Date.now();
+  const reqIdHeader = req.headers["x-request-id"];
+  const traceId = (Array.isArray(reqIdHeader) ? reqIdHeader[0] : reqIdHeader) || `req-${crypto.randomUUID().slice(0, 8)}`;
+  const fwdHeader = req.headers["x-forwarded-for"];
+  const realIpHeader = req.headers["x-real-ip"];
+  const clientIp =
+    (Array.isArray(realIpHeader) ? realIpHeader[0] : realIpHeader) ||
+    (Array.isArray(fwdHeader) ? fwdHeader[0] : fwdHeader)?.split(",")[0]?.trim() ||
+    req.socket.remoteAddress ||
+    "unknown";
+
+  // Cấu hình CORS & Tracing header
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID");
+  res.setHeader("X-Request-ID", traceId);
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -210,6 +223,7 @@ const httpServer = http.createServer(async (req, res) => {
     req.on("end", async () => {
       try {
         const { username, password, displayName, nodePort } = JSON.parse(body || "{}");
+        const cleanActor = typeof username === "string" ? username.trim().toLowerCase() : "unknown";
         const authRes = await userService.register(username, password, displayName, nodePort);
         authAttemptsCounter.inc({ action: "register", status: authRes.success ? "success" : "failed" });
         if (authRes.success && authRes.user) {
@@ -218,9 +232,37 @@ const httpServer = http.createServer(async (req, res) => {
           // Cho node 2500ms để khởi động, bind WebSocket port và kết nối DB
           await new Promise((r) => setTimeout(r, 2500));
         }
-        res.writeHead(authRes.success ? 200 : 400, { "Content-Type": "application/json" });
+        const statusCode = authRes.success ? 200 : 400;
+        const durationMs = Date.now() - reqStartedAt;
+        if (authRes.success) {
+          logger.info("AUTH", `Đăng ký tài khoản '${cleanActor}' thành công (UI:${authRes.user?.nodePort})`, undefined, {
+            traceId,
+            actor: cleanActor,
+            clientIp,
+            action: "POST /api/auth/register",
+            statusCode,
+            durationMs
+          });
+        } else {
+          logger.warn("SECURITY", `Đăng ký thất bại cho '${cleanActor}': ${authRes.error}`, undefined, {
+            traceId,
+            actor: cleanActor,
+            clientIp,
+            action: "POST /api/auth/register",
+            statusCode,
+            durationMs
+          });
+        }
+        res.writeHead(statusCode, { "Content-Type": "application/json" });
         res.end(JSON.stringify(authRes));
       } catch (err: any) {
+        logger.error("HTTP", `Lỗi xử lý /api/auth/register: ${err.message}`, undefined, {
+          traceId,
+          clientIp,
+          action: "POST /api/auth/register",
+          statusCode: 500,
+          durationMs: Date.now() - reqStartedAt
+        });
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
@@ -235,6 +277,7 @@ const httpServer = http.createServer(async (req, res) => {
     req.on("end", async () => {
       try {
         const { username, password } = JSON.parse(body || "{}");
+        const cleanActor = typeof username === "string" ? username.trim().toLowerCase() : "unknown";
         const authRes = await userService.login(username, password);
         const loginStatus = authRes.success ? "success" : authRes.lockedMinutes ? "locked" : "failed";
         authAttemptsCounter.inc({ action: "login", status: loginStatus });
@@ -243,9 +286,42 @@ const httpServer = http.createServer(async (req, res) => {
           spawnPeerNode(authRes.user.username, authRes.user.displayName, authRes.user.nodePort);
           await new Promise((r) => setTimeout(r, 2500));
         }
-        res.writeHead(authRes.success ? 200 : 400, { "Content-Type": "application/json" });
+        const statusCode = authRes.success ? 200 : authRes.lockedMinutes ? 429 : 400;
+        const durationMs = Date.now() - reqStartedAt;
+        if (authRes.success) {
+          logger.info("AUTH", `Đăng nhập thành công cho '${cleanActor}'`, undefined, {
+            traceId,
+            actor: cleanActor,
+            clientIp,
+            action: "POST /api/auth/login",
+            statusCode,
+            durationMs
+          });
+        } else {
+          logger.warn(
+            "SECURITY",
+            `Đăng nhập thất bại (${loginStatus}) cho '${cleanActor}': ${authRes.error}`,
+            undefined,
+            {
+              traceId,
+              actor: cleanActor,
+              clientIp,
+              action: "POST /api/auth/login",
+              statusCode,
+              durationMs
+            }
+          );
+        }
+        res.writeHead(statusCode, { "Content-Type": "application/json" });
         res.end(JSON.stringify(authRes));
       } catch (err: any) {
+        logger.error("HTTP", `Lỗi xử lý /api/auth/login: ${err.message}`, undefined, {
+          traceId,
+          clientIp,
+          action: "POST /api/auth/login",
+          statusCode: 500,
+          durationMs: Date.now() - reqStartedAt
+        });
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
@@ -257,13 +333,30 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/auth/verify") {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      logger.warn("SECURITY", "Xác thực token thất bại: thiếu Bearer Token", undefined, {
+        traceId,
+        clientIp,
+        action: "GET /api/auth/verify",
+        statusCode: 401,
+        durationMs: Date.now() - reqStartedAt
+      });
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ valid: false, error: "Thiếu Bearer Token" }));
       return;
     }
     const token = authHeader.substring(7);
     const result = userService.verifyToken(token);
-    res.writeHead(result.valid ? 200 : 401, { "Content-Type": "application/json" });
+    const statusCode = result.valid ? 200 : 401;
+    if (!result.valid) {
+      logger.warn("SECURITY", `Token JWT không hợp lệ: ${result.error}`, undefined, {
+        traceId,
+        clientIp,
+        action: "GET /api/auth/verify",
+        statusCode,
+        durationMs: Date.now() - reqStartedAt
+      });
+    }
+    res.writeHead(statusCode, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
     return;
   }
@@ -275,6 +368,13 @@ const httpServer = http.createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, users }));
     } catch (err: any) {
+      logger.error("HTTP", `Lỗi truy vấn danh sách users: ${err.message}`, undefined, {
+        traceId,
+        clientIp,
+        action: "GET /api/auth/users",
+        statusCode: 500,
+        durationMs: Date.now() - reqStartedAt
+      });
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }

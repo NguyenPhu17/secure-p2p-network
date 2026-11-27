@@ -141,11 +141,45 @@ services:
     depends_on:
       prometheus:
         condition: service_healthy
+      loki:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
+    networks:
+      - p2p-net
+
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: p2p-loki
+    restart: always
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    mem_limit: 512m
+    cpus: 0.5
+    logging: *default-logging
+    networks:
+      - p2p-net
+
+  promtail:
+    image: grafana/promtail:3.3.0
+    container_name: p2p-promtail
+    restart: always
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - ./logs:/var/log/p2p:ro
+    mem_limit: 256m
+    cpus: 0.25
+    logging: *default-logging
+    depends_on:
+      - loki
     networks:
       - p2p-net
 
@@ -195,6 +229,7 @@ volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
+  loki_data:
 
 networks:
   p2p-net:

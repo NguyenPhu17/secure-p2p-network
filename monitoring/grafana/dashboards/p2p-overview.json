@@ -88,7 +88,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "p2p_managed_active_nodes or count(up{job=\"p2p-peers\"} == 1) or vector(0)",
+          "expr": "sum(p2p_managed_active_nodes) or count(up{job=\"p2p-peers\"} == 1) or vector(0)",
           "refId": "A"
         }
       ],
@@ -543,7 +543,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "max(100 * (1 - (node_filesystem_avail_bytes{mountpoint=~\"/|/rootfs\",fstype!~\"tmpfs|squashfs|overlay|nsfs\"} / node_filesystem_size_bytes{mountpoint=~\"/|/rootfs\",fstype!~\"tmpfs|squashfs|overlay|nsfs\"}))) or max(100 * (1 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})))",
+          "expr": "max(100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|squashfs|nsfs|ramfs|fuse.*\"} / (node_filesystem_size_bytes{fstype!~\"tmpfs|squashfs|nsfs|ramfs|fuse.*\"} > 0))))",
           "refId": "A"
         }
       ],
@@ -589,16 +589,109 @@
           "unit": "Bps"
         }
       }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
+      "id": 400,
+      "title": "📜 CENTRALIZED LOGS & DISTRIBUTED TRACING (Loki)",
+      "type": "row"
+    },
+    {
+      "id": 401,
+      "title": "Security & Auth Audit Logs (Login, Register, Brute-force)",
+      "type": "logs",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 42 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"p2p-logs\", category=~\"AUTH|SECURITY\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 402,
+      "title": "System Errors & Warnings Stream",
+      "type": "logs",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 42 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"p2p-logs\", level=~\"ERROR|WARN\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 403,
+      "title": "Distributed Trace & P2P Event Stream (Lọc theo Trace / Message ID / User)",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 51 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"p2p-logs\"} |~ \"(?i)${traceId}\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
     }
   ],
   "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["p2p", "devops", "monitoring", "sre"],
+  "tags": ["p2p", "devops", "monitoring", "sre", "loki"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "", "value": "" },
+        "hide": 0,
+        "label": "Trace / Search",
+        "name": "traceId",
+        "options": [{ "selected": true, "text": "", "value": "" }],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "textbox"
+      }
+    ]
+  },
   "time": { "from": "now-15m", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "P2P Network Production Dashboard",
   "uid": "p2p-production-dashboard",
-  "version": 3
+  "version": 4
 }

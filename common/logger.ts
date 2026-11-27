@@ -10,12 +10,20 @@ import path from "node:path";
 export interface LogEntry {
   id: string;
   timestamp: number;
+  timestampIso?: string;
   timeStr: string;
+  service?: string;
   level: "INFO" | "WARN" | "ERROR" | "DEBUG";
-  category: "PROTOCOL" | "NETWORK" | "STORAGE" | "SYSTEM" | "DHT" | "ROUTING";
+  category: "PROTOCOL" | "NETWORK" | "STORAGE" | "SYSTEM" | "DHT" | "ROUTING" | "AUTH" | "HTTP" | "SECURITY";
   direction?: "IN" | "OUT" | "INTERNAL";
   messageType?: string;
   peer?: string;
+  traceId?: string;
+  actor?: string;
+  clientIp?: string;
+  action?: string;
+  statusCode?: number;
+  durationMs?: number;
   summary: string;
   details?: any;
 }
@@ -111,12 +119,15 @@ export class Logger {
   /**
    * Ghi log cấu trúc
    */
-  public log(entryInput: Omit<LogEntry, "id" | "timestamp" | "timeStr">): LogEntry {
+  public log(entryInput: Omit<LogEntry, "id" | "timestamp" | "timeStr" | "timestampIso" | "service">): LogEntry {
     const now = new Date();
+    const iso = now.toISOString();
     const entry: LogEntry = {
       id: `${now.getTime()}-${Math.random().toString(36).substring(2, 7)}`,
       timestamp: now.getTime(),
-      timeStr: now.toISOString().replace("T", " ").substring(0, 19),
+      timestampIso: iso,
+      timeStr: iso.replace("T", " ").substring(0, 19),
+      service: this.contextName,
       ...entryInput
     };
 
@@ -152,8 +163,9 @@ export class Logger {
     const dirTag = entry.direction ? `[${entry.direction}]` : "";
     const typeTag = entry.messageType ? `[${entry.messageType}]` : "";
     const peerTag = entry.peer ? `(@${entry.peer})` : "";
+    const traceTag = entry.traceId ? `[trace=${entry.traceId}]` : "";
     console.log(
-      `[${entry.timeStr}] [${this.contextName}] [${entry.level}] [${entry.category}] ${dirTag}${typeTag}${peerTag} ${entry.summary}`
+      `[${entry.timeStr}] [${this.contextName}] [${entry.level}] [${entry.category}] ${dirTag}${typeTag}${peerTag}${traceTag} ${entry.summary}`
     );
 
     // 3. Ghi ra file nếu kích hoạt (kèm xoay vòng khi vượt quá ngưỡng)
